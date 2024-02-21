@@ -2,25 +2,33 @@ seed_everything: 1234
 data:
   base_path: /u/wjkang/data/librispeech_hf
   train_set: [
-    librispeech_train.clean.100_with_responses.hf,
-    librispeech_train.clean.360_with_responses.hf,
-    # librispeech_train.other.500_with_responses.hf,
+    librispeech_train.clean.100_with_responses_tokenized.hf,
+    # librispeech_train.clean.360_with_responses_tokenized.hf,
+    # librispeech_train.other.500_with_responses_tokenized.hf,
   ]
   val_set: [
-    librispeech_validation.clean_with_responses.hf,
-    # librispeech_validation.other_with_responses.hf,
+    librispeech_validation.clean_with_responses_tokenized.hf,
+    # librispeech_validation.other_with_responses_tokenized.hf,
   ]
-train:
-  num_gpus: 1
-  optimizer:
-    lr: 1e-4
-    beta1: 0.9
-    beta2: 0.999
-  batch_size: 1
-  epochs: 100
 model:
   audio_encoder_type: facebook/hubert-large-ls960-ft
   llm_embedding_channels: 3072  # LLM input embedding size
   pooling:
     kernel_size: 8
     stride: 4
+audio:
+  sampling_rate: 16000
+train:
+  num_gpus: 1
+  num_workers: 4
+  optimizer:
+    lr: 1e-4
+    beta1: 0.9
+    beta2: 0.999
+  batch_size: 1
+  grad_accum_interval: 8
+  epochs: 100
+log:
+  checkpoint_dir: checkpoints
+  log_dir: logs
+  log_interval: 10

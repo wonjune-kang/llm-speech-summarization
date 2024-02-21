@@ -2,9 +2,9 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 class MyWriter(SummaryWriter):
-    def __init__(self, hp, logdir):
+    def __init__(self, config, logdir):
         super(MyWriter, self).__init__(logdir)
-        self.sample_rate = hp.audio.sampling_rate
+        self.sample_rate = config.audio.sampling_rate
 
     def log_training(self, losses, step):
         for loss_type, value in losses.items():

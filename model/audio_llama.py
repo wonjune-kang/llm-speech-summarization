@@ -87,9 +87,6 @@ class AudioLlamaForCausalLM(LlamaForCausalLM):
             logits = self.lm_head(hidden_states)
         logits = logits.float()
 
-        print(logits.shape)
-        print(labels.shape)
-
         loss = None
         # TODO: Currently assumes a batch size of 1. Change to incorporate
         # sizes > 1.
