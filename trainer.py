@@ -12,6 +12,7 @@ from utils import (
     batch_full_embed_sequence,
     collate_audio_batch,
     compute_num_audio_embeds,
+    merge_prompt_tokens,
 )
 from writer import MyWriter
 
@@ -43,6 +44,10 @@ class Trainer():
         os.makedirs(self.log_dir, exist_ok=True)
 
         self.writer = MyWriter(self.config, self.log_dir)
+
+        # Set up train and validation dataloaders.
+        self.get_dataloaders()
+        print("Set up dataloaders.\n")
 
         # Audio encoder.
         self.audio_encoder = AudioEncoder(self.config)
@@ -89,10 +94,6 @@ class Trainer():
 
         # Number of epochs to train.
         self.num_epochs = self.config.train.epochs
-
-        # Set up train and validation dataloaders.
-        self.get_dataloaders()
-        print("Set up dataloaders.\n")
 
         # Load checkpoint if specified.
         if self.args.checkpoint_path:
@@ -239,9 +240,76 @@ class Trainer():
                     }
                     self.writer.log_training(losses, self.step)
 
-            # self.audio_encoder.eval()
-            # for batch in tqdm(self.val_dataloader):
-            #     pass
+            # Validation loop
+            self.audio_encoder.eval()
+
+            prompt_audios = []
+            prompt_texts = []
+            llm_responses = []
+            for sample_idx, (
+                audio, audio_len_samples, text_input_ids, response_input_ids
+            ) in enumerate(tqdm(self.val_dataloader)):
+                with torch.no_grad():
+                    with torch.autocast(device_type='cuda', dtype=torch.float16):
+                        audio = audio.to(self.device)
+
+                        # Compute audio embeddings using audio encoder.
+                        audio_embeds = self.audio_encoder(audio)
+
+                        # Create the full embedding sequence batch by concatenating
+                        # the prompt prefix, audio embeddings, prompt suffix, and
+                        # target LLM response.
+                        full_prompt_embed_sequence_batch = batch_full_embed_sequence(
+                            all_audio_embeds=[audio_embeds],
+                            all_text_input_ids=None,  # TODO: Change for FD loss.
+                            all_response_input_ids=response_input_ids,
+                            tokenizer=self.tokenizer,
+                            embed_tokens=self.llm.model.embed_tokens,
+                            device=self.device,
+                        )
+
+                        # Feed inputs_embeds to LLM.
+                        # TODO: Currently assumes batch size = 1 for labels -- need to change.
+                        llm_audio_output = self.llm(
+                            inputs_embeds=full_prompt_embed_sequence_batch,
+                            labels=response_input_ids[0].unsqueeze(0).to(self.device),
+                            output_hidden_states=True,
+                            # attention_mask=None,
+                        )
+
+                        # Next token prediction loss from audio input.
+                        ntp_loss = llm_audio_output.loss
+
+                        if sample_idx < self.config.log.num_generate_samples:
+                            # Get prompt embedding sequence.
+                            prompt_emb_sequence = merge_prompt_tokens(
+                                inputs_embeds=audio_embeds,
+                                tokenizer=self.tokenizer,
+                                embed_tokens=self.llm.model.embed_tokens,
+                                device=self.device,
+                            )
+
+                            # Generate LLM response to audio prompt.
+                            audio_prompt_response = self.generate_audio_prompt_response(
+                                inputs_embeds=prompt_emb_sequence,
+                                len_inputs=audio_embeds.shape[1],
+                            )
+
+                            prompt_audios.append(audio.squeeze().cpu().numpy())
+                            prompt_texts.append("Placeholder")
+                            llm_responses.append(audio_prompt_response)
+
+                    # Log loss in Tensorboard.
+                    losses = {"ntp_loss": ntp_loss.item()}
+                    self.writer.log_validation(losses, self.step)
+
+            # Log LLM responses in Tensorboard.
+            self.writer.log_audio_text_responses(
+                prompt_audios=prompt_audios,
+                prompt_texts=prompt_texts,
+                llm_responses=llm_responses,
+                epoch=epoch,
+            )
 
             # Save checkpoints.
             save_path = os.path.join(self.checkpoint_path, self.run_name, f"epoch_{epoch}.pt")
@@ -255,3 +323,20 @@ class Trainer():
                 save_path,
             )
             print(f"Saved checkpoint to {save_path}.\n")
+
+    def generate_audio_prompt_response(self, inputs_embeds, len_inputs=60):
+        with torch.no_grad():
+            # Generate
+            generate_ids = self.llm.generate(
+                input_ids=None,
+                inputs_embeds=inputs_embeds,
+                max_new_tokens=2*len_inputs,
+            )
+
+        response_text = self.tokenizer.batch_decode(
+            generate_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True,
+        )
+
+        return response_text

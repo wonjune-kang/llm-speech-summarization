@@ -3,9 +3,9 @@ import torch
 import torch.nn.functional as F
 
 
-system_prompt = ""
-prompt_prefix = f"{system_prompt}[|User|]"
-prompt_suffix = "</s>[|Assistant|]"
+SYSTEM_PROMPT = ""
+PROMPT_PREFIX = f"{SYSTEM_PROMPT}[|User|]"
+PROMPT_SUFFIX = "</s>[|Assistant|]"
 
 
 # def seed_everything(seed=1234):
@@ -47,7 +47,7 @@ def collate_audio_batch(data):
     return padded_audios, audio_len_samples, text_input_ids, response_input_ids
 
 
-def merge_prompt_tokens(
+def merge_prompt_response_tokens(
     prefix_input_ids, suffix_input_ids, inputs_embeds, response_input_ids, embed_tokens
 ):
     prefix_embeds = embed_tokens(prefix_input_ids)
@@ -64,6 +64,23 @@ def merge_prompt_tokens(
     return full_embed_sequence
 
 
+def merge_prompt_tokens(inputs_embeds, tokenizer, embed_tokens, device):
+    prefix_input_ids = tokenizer(PROMPT_PREFIX, return_tensors="pt").input_ids.to(device)
+    suffix_input_ids = tokenizer(PROMPT_SUFFIX, return_tensors="pt").input_ids.to(device)
+
+    prefix_embeds = embed_tokens(prefix_input_ids)
+    suffix_embeds = embed_tokens(suffix_input_ids)
+    prompt_embed_sequence = torch.cat(
+        [
+            prefix_embeds,
+            inputs_embeds,
+            suffix_embeds[:, 1:, :],
+        ], dim=1
+    )
+
+    return prompt_embed_sequence
+
+
 def batch_full_embed_sequence(
     all_audio_embeds,
     all_text_input_ids,
@@ -72,14 +89,14 @@ def batch_full_embed_sequence(
     embed_tokens,
     device,
 ):
-    prefix_token_ids = tokenizer(prompt_prefix, return_tensors="pt").input_ids.to(device)
-    suffix_token_ids = tokenizer(prompt_suffix, return_tensors="pt").input_ids.to(device)
+    prefix_input_ids = tokenizer(PROMPT_PREFIX, return_tensors="pt").input_ids.to(device)
+    suffix_input_ids = tokenizer(PROMPT_SUFFIX, return_tensors="pt").input_ids.to(device)
 
     full_prompt_embed_sequences = []
     for inputs_embeds, response_input_ids in zip(all_audio_embeds, all_response_input_ids):
-        full_prompt_sequence = merge_prompt_tokens(
-            prefix_input_ids=prefix_token_ids,
-            suffix_input_ids=suffix_token_ids,
+        full_prompt_sequence = merge_prompt_response_tokens(
+            prefix_input_ids=prefix_input_ids,
+            suffix_input_ids=suffix_input_ids,
             inputs_embeds=inputs_embeds.unsqueeze(0),
             response_input_ids=response_input_ids.unsqueeze(0).to(device),
             embed_tokens=embed_tokens,
