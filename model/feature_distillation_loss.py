@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class LLMKDLoss(nn.Module):
+class FeatureDistillationLoss(nn.Module):
     def __init__(self, llm, device):
-        super(LLMKDLoss, self).__init__()
+        super(FeatureDistillationLoss, self).__init__()
 
         self.llm = llm
         self.device = device
