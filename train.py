@@ -25,3 +25,5 @@ if __name__ == '__main__':
 
     config = OmegaConf.load(args.config)
     trainer = Trainer(args, config, device)
+
+    trainer.train()
