@@ -1,5 +1,6 @@
 *.ipynb
 .DS_Store
+checkpoints/
 logs/
 
 # Byte-compiled / optimized / DLL files
