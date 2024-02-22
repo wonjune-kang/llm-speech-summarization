@@ -185,7 +185,7 @@ class Trainer():
                     # Create the full embedding sequence batch by concatenating
                     # the prompt prefix, audio embeddings, prompt suffix, and
                     # target LLM response.
-                    batched_full_embed_sequence = batch_full_embed_sequence(
+                    batched_full_embed_sequence, attention_mask = batch_full_embed_sequence(
                         all_audio_embeds=unpadded_audio_embeds,
                         all_text_input_ids=None,
                         all_response_input_ids=response_input_ids,
@@ -198,9 +198,9 @@ class Trainer():
                     # TODO: Currently assumes batch size = 1 for labels -- need to change.
                     llm_audio_output = self.llm(
                         inputs_embeds=batched_full_embed_sequence,
-                        labels=response_input_ids[0].unsqueeze(0).to(self.device),
+                        labels=response_input_ids,
                         output_hidden_states=True,
-                        # attention_mask=None,
+                        attention_mask=attention_mask,
                     )
 
                     # Next token prediction loss from audio input.
@@ -263,7 +263,7 @@ class Trainer():
                         # Create the full embedding sequence batch by concatenating
                         # the prompt prefix, audio embeddings, prompt suffix, and
                         # target LLM response.
-                        batched_full_embed_sequence = batch_full_embed_sequence(
+                        batched_full_embed_sequence, _ = batch_full_embed_sequence(
                             all_audio_embeds=audio_embeds,
                             all_text_input_ids=None,  # TODO: Change for FD loss.
                             all_response_input_ids=response_input_ids,

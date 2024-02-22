@@ -8,12 +8,6 @@ PROMPT_PREFIX = f"{SYSTEM_PROMPT}[|User|]"
 PROMPT_SUFFIX = "</s>[|Assistant|]"
 
 
-# def seed_everything(seed=1234):
-#     random.seed(seed)
-#     torch.manual_seed(seed)
-#     torch.cuda.manual_seed_all(seed)
-
-
 def create_batch_prompts(user_prompts):
     system_prompt = ""
     full_prompts = [
@@ -118,7 +112,7 @@ def batch_full_embed_sequence(
     prefix_input_ids = tokenizer(PROMPT_PREFIX, return_tensors="pt").input_ids.to(device)
     suffix_input_ids = tokenizer(PROMPT_SUFFIX, return_tensors="pt").input_ids.to(device)
 
-    full_prompt_embed_sequences = []
+    unpadded_embed_sequences = []
     for inputs_embeds, response_input_ids in zip(all_audio_embeds, all_response_input_ids):
         full_prompt_sequence = merge_prompt_response_tokens(
             prefix_input_ids=prefix_input_ids,
@@ -127,45 +121,18 @@ def batch_full_embed_sequence(
             response_input_ids=response_input_ids.unsqueeze(0).to(device),
             embed_tokens=embed_tokens,
         )
-        full_prompt_embed_sequences.append(full_prompt_sequence)
+        unpadded_embed_sequences.append(full_prompt_sequence)
 
-    # TODO: Add attention mask and padding for batches > 1
+    embed_sequence_lens = [seq.shape[1] for seq in unpadded_embed_sequences]
+    max_len = max(embed_sequence_lens)
+    padded_sequences = torch.cat(
+        [
+            F.pad(
+                seq, (0, 0, max_len - seq.shape[1], 0), mode="constant"
+            ) for seq in unpadded_embed_sequences
+        ]
+    )
 
-    return torch.cat(full_prompt_embed_sequences, dim=0)
+    attention_mask = construct_attention_mask(embed_sequence_lens)
 
-
-# def batch_full_embed_sequence(
-#     all_audio_embeds,
-#     all_text_input_ids,
-#     all_response_input_ids,
-#     tokenizer,
-#     embed_tokens,
-#     device,
-# ):
-#     prefix_input_ids = tokenizer(PROMPT_PREFIX, return_tensors="pt").input_ids.to(device)
-#     suffix_input_ids = tokenizer(PROMPT_SUFFIX, return_tensors="pt").input_ids.to(device)
-
-#     unpadded_embed_sequences = []
-#     for inputs_embeds, response_input_ids in zip(all_audio_embeds, all_response_input_ids):
-#         full_prompt_sequence = merge_prompt_response_tokens(
-#             prefix_input_ids=prefix_input_ids,
-#             suffix_input_ids=suffix_input_ids,
-#             inputs_embeds=inputs_embeds.unsqueeze(0),
-#             response_input_ids=response_input_ids.unsqueeze(0).to(device),
-#             embed_tokens=embed_tokens,
-#         )
-#         unpadded_embed_sequences.append(full_prompt_sequence)
-
-#     embed_sequence_lens = [seq.shape[1] for seq in unpadded_embed_sequences]
-#     max_len = max(embed_sequence_lens)
-#     padded_sequences = torch.cat(
-#         [
-#             F.pad(
-#                 seq, (0, 0, max_len - seq.shape[1], 0), mode="constant"
-#             ) for seq in unpadded_embed_sequences
-#         ]
-#     )  # .float()
-
-#     attention_mask = construct_attention_mask(embed_sequence_lens)
-
-#     return padded_sequences, attention_mask
+    return padded_sequences, attention_mask

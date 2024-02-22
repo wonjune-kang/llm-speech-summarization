@@ -90,27 +90,35 @@ class AudioLlamaForCausalLM(LlamaForCausalLM):
         # TODO: Currently assumes a batch size of 1. Change to incorporate
         # sizes > 1.
         if labels is not None:
-            # # Shift so that tokens < n predict n
-            # shift_logits = logits[..., :-1, :].contiguous()
-            # shift_labels = labels[..., 1:].contiguous()
+            loss = 0.0
+            for sample_logits, sample_labels in zip(logits, labels):
+                # # Shift so that tokens < n predict n
+                # shift_logits = logits[..., :-1, :].contiguous()
+                # shift_labels = labels[..., 1:].contiguous()
 
-            # Shift so that tokens < n predict n, but only for tokens
-            # corresponding to the response portion of the LLM.
-            response_len = labels.shape[1]
-            shift_logits = logits[..., -response_len:-1, :].contiguous()
+                sample_logits = sample_logits.unsqueeze(0)
+                sample_labels = sample_labels.unsqueeze(0).to(self.device)
 
-            # Labels are only provided for the response portion of the LLM in
-            # the first place
-            shift_labels = labels[..., 1:].contiguous()
+                # Shift so that tokens < n predict n, but only for tokens
+                # corresponding to the response portion of the LLM.
+                response_len = sample_labels.shape[1]
+                shift_logits = sample_logits[..., -response_len:-1, :].contiguous()
 
-            # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
-            shift_logits = shift_logits.view(-1, self.config.vocab_size)
-            shift_labels = shift_labels.view(-1)
+                # Labels are only provided for the response portion of the LLM in
+                # the first place.
+                shift_labels = sample_labels[..., 1:].contiguous()
 
-            # Enable model parallelism
-            shift_labels = shift_labels.to(shift_logits.device)
-            loss = loss_fct(shift_logits, shift_labels)
+                # Flatten the tokens
+                loss_fct = CrossEntropyLoss()
+                shift_logits = shift_logits.view(-1, self.config.vocab_size)
+                shift_labels = shift_labels.view(-1)
+
+                # Enable model parallelism
+                shift_labels = shift_labels.to(shift_logits.device)
+                loss += loss_fct(shift_logits, shift_labels)
+
+            # Manually perform mean reduction for cross entropy loss.
+            loss /= logits.shape[0]
 
         if not return_dict:
             output = (logits,) + outputs[1:]
