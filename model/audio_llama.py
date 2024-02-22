@@ -26,7 +26,6 @@ class AudioLlamaForCausalLM(LlamaForCausalLM):
         # Initialize weights and apply final processing
         self.post_init()
 
-    # TODO: Modify
     def forward(
         self,
         input_ids: torch.LongTensor = None,
