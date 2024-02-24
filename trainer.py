@@ -71,6 +71,9 @@ class Trainer():
             param.requires_grad = False
         print("Loaded LLM.\n")
 
+        # Flag for using feature distillation loss.
+        self.use_fd_loss = self.config.model.use_fd_loss
+
         # Send model to device.
         self.audio_encoder.to(self.device)
         self.llm.to(self.device)
@@ -131,7 +134,7 @@ class Trainer():
             all_val_datasets.append(dataset)
         self.val_dataset = concatenate_datasets(all_val_datasets)
 
-        # NOTE: For debugging only. Comment out if not debugging.
+        # NOTE: For debugging only. Comment out below if not debugging.
         self.train_dataset = self.train_dataset.select(range(500))
         self.val_dataset = self.val_dataset.select(range(500))
 
@@ -154,6 +157,9 @@ class Trainer():
         )
 
     def train(self):
+        # GradScaler for mixed precision training.
+        scaler = torch.cuda.amp.GradScaler()
+
         for epoch in range(self.num_epochs):
             print(f"Epoch {epoch}")
 
@@ -162,50 +168,60 @@ class Trainer():
             self.optimizer.zero_grad()
 
             for batch_idx, (
-                padded_audios, audio_len_samples, text_input_ids, response_input_ids
+                padded_audios, audio_len_samples, _, text_input_ids, response_input_ids
             ) in enumerate(tqdm(self.train_dataloader)):
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     padded_audios = padded_audios.to(self.device)
 
                     # Compute audio embeddings using audio encoder.
-                    unpadded_audio_embeds = []
                     padded_audio_embeds = self.audio_encoder(padded_audios)
 
-                    # Unpad the audio embeddings in preparation for creating the
-                    # full embedding sequence to feed into the LLM.
-                    for padded_audio_embed, audio_samples in zip(
-                        padded_audio_embeds, audio_len_samples
-                    ):
-                        num_audio_embeds = compute_num_audio_embeds(
-                            audio_samples, sr=self.config.audio.sampling_rate
-                        )
-                        unpadded_audio_embed = padded_audio_embed[:num_audio_embeds, :]
-                        unpadded_audio_embeds.append(unpadded_audio_embed)
+                    if self.config.train.batch_size > 1:
+                        # Unpad the audio embeddings in preparation for creating
+                        # the full embedding sequence to feed into the LLM.
+                        unpadded_audio_embeds = []
+                        for padded_audio_embed, audio_samples in zip(
+                            padded_audio_embeds, audio_len_samples
+                        ):
+                            num_audio_embeds = compute_num_audio_embeds(
+                                audio_samples, sr=self.config.audio.sampling_rate
+                            )
+                            unpadded_audio_embed = padded_audio_embed[:num_audio_embeds, :]
+                            unpadded_audio_embeds.append(unpadded_audio_embed)
+                    else:
+                        # If batch size = 1, no need to unpad by cropping.
+                        unpadded_audio_embeds = padded_audio_embeds
 
                     # Create the full embedding sequence batch by concatenating
                     # the prompt prefix, audio embeddings, prompt suffix, and
                     # target LLM response.
-                    batched_full_embed_sequence, attention_mask = batch_full_embed_sequence(
+                    (
+                        batched_audio_prompt_sequences,
+                        audio_attention_mask,
+                        batched_text_prompt_sequences,
+                        text_attention_mask,
+                    ) = batch_full_embed_sequence(
                         all_audio_embeds=unpadded_audio_embeds,
-                        all_text_input_ids=None,
+                        all_text_input_ids=text_input_ids,
                         all_response_input_ids=response_input_ids,
                         tokenizer=self.tokenizer,
                         embed_tokens=self.llm.model.embed_tokens,
                         device=self.device,
+                        process_text=True,  # self.use_fd_loss,
                     )
 
                     # Feed inputs_embeds to LLM.
-                    # TODO: Currently assumes batch size = 1 for labels -- need to change.
                     llm_audio_output = self.llm(
-                        inputs_embeds=batched_full_embed_sequence,
+                        inputs_embeds=batched_audio_prompt_sequences,
                         labels=response_input_ids,
                         output_hidden_states=True,
-                        attention_mask=attention_mask,
+                        attention_mask=audio_attention_mask,
                     )
 
                     # Next token prediction loss from audio input.
                     ntp_loss = llm_audio_output.loss
 
+                    # TODO: Implement
                     # # Feature distillation loss.
                     # with torch.no_grad():
                     #     llm_text_output = self.llm(
@@ -224,14 +240,17 @@ class Trainer():
 
                 # Normalize loss to account for gradient accumulation and do backward pass.
                 total_loss /= self.grad_accum_interval
-                total_loss.backward()
+                scaler.scale(total_loss).backward()
+                # total_loss.backward()
 
                 # Weights update.
                 if (
-                    (self.step % self.grad_accum_interval == 0) or
+                    ((batch_idx + 1) % self.grad_accum_interval == 0) or
                     (batch_idx + 1 == len(self.train_dataloader))
                 ):
-                    self.optimizer.step()
+                    scaler.step(self.optimizer)
+                    scaler.update()
+                    # self.optimizer.step()
                     self.optimizer.zero_grad()
 
                 self.step += 1
@@ -244,90 +263,137 @@ class Trainer():
                     }
                     self.writer.log_training(losses, self.step)
 
-            # Validation loop
-            self.audio_encoder.eval()
+                # Perform validation at interval.
+                if self.step % self.config.log.validation_interval == 0:
+                    self.validate(epoch)
 
-            prompt_audios = []
-            prompt_texts = []
-            llm_responses = []
-            for sample_idx, (
-                audio, audio_len_samples, text_input_ids, response_input_ids
-            ) in enumerate(tqdm(self.val_dataloader)):
-                with torch.no_grad():
-                    with torch.autocast(device_type='cuda', dtype=torch.float16):
-                        audio = audio.to(self.device)
+            # Perform validation at end of epoch.
+            self.validate(epoch)
 
-                        # Compute audio embeddings using audio encoder.
-                        audio_embeds = self.audio_encoder(audio)
+    def validate(self, epoch):
+        # Validation loop
+        self.audio_encoder.eval()
 
-                        # Create the full embedding sequence batch by concatenating
-                        # the prompt prefix, audio embeddings, prompt suffix, and
-                        # target LLM response.
-                        batched_full_embed_sequence, _ = batch_full_embed_sequence(
-                            all_audio_embeds=audio_embeds,
-                            all_text_input_ids=None,  # TODO: Change for FD loss.
-                            all_response_input_ids=response_input_ids,
+        audio_nlls = []
+        text_nlls = []
+        prompt_audios = []
+        prompt_texts = []
+        llm_audio_responses = []
+        llm_text_responses = []
+        for sample_idx, (
+            audio, _, texts, text_input_ids, response_input_ids
+        ) in enumerate(tqdm(self.val_dataloader)):
+            with torch.no_grad():
+                with torch.autocast(device_type='cuda', dtype=torch.float16):
+                    audio = audio.to(self.device)
+
+                    # Compute audio embeddings using audio encoder.
+                    audio_embeds = self.audio_encoder(audio)
+
+                    # Create the full embedding sequence batch by concatenating
+                    # the prompt prefix, audio embeddings, prompt suffix, and
+                    # target LLM response.
+                    (
+                        full_audio_prompt_sequence,
+                        _,
+                        full_text_prompt_sequence,
+                        _,
+                    ) = batch_full_embed_sequence(
+                        all_audio_embeds=audio_embeds,
+                        all_text_input_ids=text_input_ids,
+                        all_response_input_ids=response_input_ids,
+                        tokenizer=self.tokenizer,
+                        embed_tokens=self.llm.model.embed_tokens,
+                        device=self.device,
+                        process_text=True,
+                    )
+
+                    # Feed audio and text prompt sequences to LLM.
+                    llm_audio_output = self.llm(
+                        inputs_embeds=full_audio_prompt_sequence,
+                        labels=response_input_ids[0].unsqueeze(0).to(self.device),
+                    )
+                    llm_text_output = self.llm(
+                        inputs_embeds=full_text_prompt_sequence,
+                        labels=response_input_ids[0].unsqueeze(0).to(self.device),
+                    )
+
+                    # Next token prediction losses for audio and text sequence inputs.
+                    audio_ntp_loss = llm_audio_output.loss
+                    text_ntp_loss = llm_text_output.loss
+
+                    # Perform generation using the audio and text prompts.
+                    if sample_idx < self.config.log.num_generate_samples:
+                        # Get prompt embedding sequences.
+                        audio_prompt_emb_sequence = merge_prompt_tokens(
+                            inputs_embeds=audio_embeds,
                             tokenizer=self.tokenizer,
                             embed_tokens=self.llm.model.embed_tokens,
                             device=self.device,
                         )
 
-                        # Feed inputs_embeds to LLM.
-                        # TODO: Currently assumes batch size = 1 for labels -- need to change.
-                        llm_audio_output = self.llm(
-                            inputs_embeds=batched_full_embed_sequence,
-                            labels=response_input_ids[0].unsqueeze(0).to(self.device),
-                            output_hidden_states=True,
+                        text_embeds = self.llm.model.embed_tokens(
+                            text_input_ids[0].unsqueeze(0).to(self.device)
+                        )
+                        text_prompt_emb_sequence = merge_prompt_tokens(
+                            inputs_embeds=text_embeds,
+                            tokenizer=self.tokenizer,
+                            embed_tokens=self.llm.model.embed_tokens,
+                            device=self.device,
                         )
 
-                        # Next token prediction loss from audio input.
-                        ntp_loss = llm_audio_output.loss
+                        # Generate LLM responses to prompts.
+                        audio_prompt_response = self.generate_llm_response(
+                            inputs_embeds=audio_prompt_emb_sequence,
+                            len_inputs=audio_embeds.shape[1],
+                        )[0]
+                        text_prompt_response = self.generate_llm_response(
+                            inputs_embeds=text_prompt_emb_sequence,
+                            len_inputs=audio_embeds.shape[1],  # Same len_inputs as audio.
+                        )[0]
 
-                        if sample_idx < self.config.log.num_generate_samples:
-                            # Get prompt embedding sequence.
-                            prompt_emb_sequence = merge_prompt_tokens(
-                                inputs_embeds=audio_embeds,
-                                tokenizer=self.tokenizer,
-                                embed_tokens=self.llm.model.embed_tokens,
-                                device=self.device,
-                            )
+                        prompt_audios.append(audio.squeeze().cpu().numpy())
+                        prompt_texts.append(texts[0])
+                        llm_audio_responses.append(audio_prompt_response)
+                        llm_text_responses.append(text_prompt_response)
 
-                            # Generate LLM response to audio prompt.
-                            audio_prompt_response = self.generate_audio_prompt_response(
-                                inputs_embeds=prompt_emb_sequence,
-                                len_inputs=audio_embeds.shape[1],
-                            )[0]
+            # Log loss in Tensorboard.
+            losses = {"ntp_loss": audio_ntp_loss.item()}
+            self.writer.log_validation(losses, self.step)
 
-                            prompt_audios.append(audio.squeeze().cpu().numpy())
-                            prompt_texts.append("Placeholder")
-                            llm_responses.append(audio_prompt_response)
+            # Compute perplexity from NLLs.
+            audio_nlls.append(audio_ntp_loss)
+            text_nlls.append(text_ntp_loss)
 
-                    # Log loss in Tensorboard.
-                    losses = {"ntp_loss": ntp_loss.item()}
-                    self.writer.log_validation(losses, self.step)
+        # Log LLM responses in Tensorboard.
+        self.writer.log_audio_text_responses(
+            prompt_audios=prompt_audios,
+            prompt_texts=prompt_texts,
+            audio_responses=llm_audio_responses,
+            text_responses=llm_text_responses,
+            epoch=epoch,
+        )
 
-            # Log LLM responses in Tensorboard.
-            self.writer.log_audio_text_responses(
-                prompt_audios=prompt_audios,
-                prompt_texts=prompt_texts,
-                llm_responses=llm_responses,
-                epoch=epoch,
-            )
+        # Log perplexity in Tensorboard.
+        audio_perplexity = torch.exp(torch.stack(audio_nlls).mean())
+        text_perplexity = torch.exp(torch.stack(text_nlls).mean())
+        self.writer.log_validation_perplexity(audio_perplexity, "audio", epoch)
+        self.writer.log_validation_perplexity(text_perplexity, "text", epoch)
 
-            # Save checkpoints.
-            save_path = os.path.join(self.checkpoint_save_dir, f"epoch_{epoch}.pt")
-            torch.save(
-                {
-                    "audio_encoder": self.audio_encoder.state_dict(),
-                    "optimizer": self.optimizer.state_dict(),
-                    "epoch": epoch,
-                    "step": self.step,
-                },
-                save_path,
-            )
-            print(f"Saved checkpoint for epoch {epoch} to {save_path}.\n")
+        # Save checkpoints.
+        save_path = os.path.join(self.checkpoint_save_dir, f"epoch_{epoch}_step_{self.step}.pt")
+        torch.save(
+            {
+                "audio_encoder": self.audio_encoder.state_dict(),
+                "optimizer": self.optimizer.state_dict(),
+                "epoch": epoch,
+                "step": self.step,
+            },
+            save_path,
+        )
+        print(f"Saved checkpoint for epoch {epoch} to {save_path}.\n")
 
-    def generate_audio_prompt_response(self, inputs_embeds, len_inputs=60):
+    def generate_llm_response(self, inputs_embeds, len_inputs=60):
         with torch.no_grad():
             # Generate
             generate_ids = self.llm.generate(

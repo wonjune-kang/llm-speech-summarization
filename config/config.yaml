@@ -1,6 +1,6 @@
 seed_everything: 1234
 data:
-  base_path: /u/wjkang/data/librispeech_hf
+  base_path: /home/gridsan/wjkang/data/librispeech_hf
   train_set: [
     librispeech_train.clean.100_with_responses_tokenized.hf,
     # librispeech_train.clean.360_with_responses_tokenized.hf,
@@ -16,6 +16,7 @@ model:
   pooling:
     kernel_size: 8
     stride: 4
+  use_fd_loss: False
 audio:
   sampling_rate: 16000
 train:
@@ -26,9 +27,11 @@ train:
     beta1: 0.9
     beta2: 0.999
   batch_size: 1
-  grad_accum_interval: 8
-  epochs: 100
+  grad_accum_interval: 16
+  epochs: 20
 log:
   checkpoint_dir: checkpoints
   log_dir: logs
   log_interval: 10
+  validation_interval: 10000
+  num_generate_samples: 5
