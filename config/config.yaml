@@ -2,21 +2,23 @@ seed_everything: 1234
 data:
   base_path: /home/gridsan/wjkang/data/librispeech_hf
   train_set: [
-    librispeech_train.clean.100_with_responses_tokenized.hf,
-    # librispeech_train.clean.360_with_responses_tokenized.hf,
-    # librispeech_train.other.500_with_responses_tokenized.hf,
+    librispeech_train.clean.100_with_responses_tokenized_filtered_with_offsets.hf,
+    # librispeech_train.clean.360_with_responses_tokenized_filtered_with_offsets.hf,
+    # librispeech_train.other.500_with_responses_tokenized_filtered_with_offsets.hf,
   ]
   val_set: [
-    librispeech_validation.clean_with_responses_tokenized.hf,
-    # librispeech_validation.other_with_responses_tokenized.hf,
+    librispeech_validation.clean_with_responses_tokenized_filtered_with_offsets.hf,
+    # librispeech_validation.other_with_responses_tokenized_filtered_with_offsets.hf,
   ]
 model:
-  audio_encoder_type: facebook/hubert-large-ls960-ft
+  audio_encoder:
+    type: facebook/hubert-large-ls960-ft
+    downsample_method: stack
+    downsample_factor: 4
+    pooling:
+      kernel_size: 8
+      stride: 4
   llm_embedding_channels: 3072  # LLM input embedding size
-  pooling:
-    kernel_size: 8
-    stride: 4
-  use_fd_loss: False
 audio:
   sampling_rate: 16000
 train:
@@ -29,6 +31,11 @@ train:
   batch_size: 1
   grad_accum_interval: 16
   epochs: 20
+  use_kd_loss: True
+  use_fd_loss: False
+  ntp_loss_weight: 0.9
+  kd_loss_weight: 0.1
+  fd_loss_weight: 0.5
 log:
   checkpoint_dir: checkpoints
   log_dir: logs
