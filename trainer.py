@@ -13,6 +13,7 @@ from utils import (
     collate_audio_batch,
     compute_num_audio_embeds,
     merge_prompt_tokens,
+    soft_cross_entropy,
 )
 from writer import MyWriter
 
@@ -71,8 +72,14 @@ class Trainer():
             param.requires_grad = False
         print("Loaded LLM.\n")
 
-        # Flag for using feature distillation loss.
-        self.use_fd_loss = self.config.model.use_fd_loss
+        # Flags for using knowledge and feature distillation losses.
+        self.use_kd_loss = self.config.train.use_kd_loss
+        self.use_fd_loss = self.config.train.use_fd_loss
+
+        # Loss weighting.
+        self.ntp_loss_weight = self.config.train.ntp_loss_weight
+        self.kd_loss_weight = self.config.train.kd_loss_weight
+        self.fd_loss_weight = self.config.train.fd_loss_weight
 
         # Send model to device.
         self.audio_encoder.to(self.device)
@@ -221,22 +228,36 @@ class Trainer():
                     # Next token prediction loss from audio input.
                     ntp_loss = llm_audio_output.loss
 
-                    # TODO: Implement
-                    # # Feature distillation loss.
-                    # with torch.no_grad():
-                    #     llm_text_output = self.llm(
-                    #         input_ids=text_input_ids,
-                    #         attention_mask=text_attention_mask,
-                    #         labels=response_labels,
-                    #         output_hidden_states=True,
-                    #     )
-                    #     fd_loss = FeatureDistillationLoss(
-                    #         llm_audio_output.hidden_states,
-                    #         llm_text_output.hidden_states,
-                    #     )
+                    if self.use_kd_loss or self.use_fd_loss:
+                        # Perform forward pass with text inputs for distillation losses.
+                        with torch.no_grad():
+                            llm_text_output = self.llm(
+                                inputs_embeds=batched_text_prompt_sequences,
+                                labels=response_input_ids,
+                                output_hidden_states=True,
+                                attention_mask=text_attention_mask,
+                            )
 
-                    # Sum the two loss terms.
-                    total_loss = ntp_loss  # + fd_loss
+                        if self.use_kd_loss:
+                            # NOTE: Assumes a batch size of 1.
+                            num_labels = response_input_ids[0].shape[0]
+                            kd_loss = soft_cross_entropy(
+                                input=llm_audio_output.logits[:, -num_labels:, :],
+                                target=llm_text_output.logits[:, -num_labels:, :].detach(),
+                            )
+
+                        # if self.use_fd_loss:
+                        #     fd_loss = FeatureDistillationLoss(
+                        #         llm_audio_output.hidden_states,
+                        #         llm_text_output.hidden_states,
+                        #     )
+
+                    # Sum the loss terms.
+                    total_loss = (
+                        self.ntp_loss_weight * ntp_loss
+                        + self.kd_loss_weight * kd_loss
+                        # + self.fd_loss_weight * fd_loss
+                    )
 
                 # Normalize loss to account for gradient accumulation and do backward pass.
                 total_loss /= self.grad_accum_interval
@@ -259,6 +280,7 @@ class Trainer():
                 if self.step % self.config.log.log_interval == 0:
                     losses = {
                         "ntp_loss": ntp_loss.item(),
+                        "kd_loss": kd_loss.item()
                         # "fd_loss": fd_loss.item(),
                     }
                     self.writer.log_training(losses, self.step)

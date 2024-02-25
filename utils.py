@@ -175,3 +175,14 @@ def batch_full_embed_sequence(
         text_attention_mask = None
 
     return padded_audio_sequences, audio_attention_mask, padded_text_sequences, text_attention_mask
+
+
+def soft_cross_entropy(input, target, reduction="mean"):
+    s_likelihood = F.log_softmax(input, dim=-1)
+    t_probability = F.softmax(target, dim=-1)
+    cross_entropy = -torch.sum(t_probability * s_likelihood, dim=-1)
+    if reduction == "mean":
+        cross_entropy = cross_entropy.mean()
+    else:
+        pass
+    return cross_entropy
