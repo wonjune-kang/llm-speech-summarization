@@ -32,13 +32,15 @@ def compute_num_audio_embeds(audio_samples, sr=16000):
 
 
 def collate_audio_batch(data):
-    # data contains 'audio', 'text', 'text_input_ids', 'llama2_response', 'response_input_ids'
+    # data contains 'audio', 'text', 'text_input_ids', 'llama2_response',
+    # 'response_input_ids', and 'pool_ranges_4'
     # Collates only 'audio' in preparation for feeding into audio encoder.
     # text_input_ids and response_input_ids are left as as here.
     raw_audios = [x['audio']['array'] for x in data]
     audio_len_samples = [len(audio) for audio in raw_audios]
     max_len = max(audio_len_samples)
     prompt_texts = [x['text'] for x in data]
+    ctc_pool_ranges = [x['pool_ranges_4'] for x in data]
 
     # Zero-pad audio on the right to match the longest audio clip in the batch.
     padded_audios = torch.stack(
@@ -53,7 +55,14 @@ def collate_audio_batch(data):
     # TODO: Crop response_input_ids to maximum length to preserve memory.
     response_input_ids = [x['response_input_ids'] for x in data]
 
-    return padded_audios, audio_len_samples, prompt_texts, text_input_ids, response_input_ids
+    return (
+        padded_audios,
+        audio_len_samples,
+        prompt_texts,
+        text_input_ids,
+        response_input_ids,
+        ctc_pool_ranges,
+    )
 
 
 def merge_prompt_response_tokens(
