@@ -150,8 +150,8 @@ class Trainer():
         self.val_dataset = concatenate_datasets(all_val_datasets)
 
         # NOTE: For debugging only. Comment out below if not debugging.
-        self.train_dataset = self.train_dataset.select(range(500))
-        self.val_dataset = self.val_dataset.select(range(500))
+        # self.train_dataset = self.train_dataset.select(range(500))
+        # self.val_dataset = self.val_dataset.select(range(500))
 
         # Create dataloaders.
         self.train_dataloader = torch.utils.data.DataLoader(
