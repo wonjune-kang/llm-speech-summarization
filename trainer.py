@@ -118,9 +118,10 @@ class Trainer():
 
     def load_checkpoint(self, checkpoint_path):
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
-        self.audio_encoder.load_state_dict(checkpoint['audio_encoder'])
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
-        self.step = checkpoint['step']
+        self.audio_encoder.load_state_dict(checkpoint["audio_encoder"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
+        self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+        self.step = checkpoint["step"]
 
         # If training on GPU and loading optimizer state_dict, manually move
         # parameters to GPU.
@@ -414,14 +415,14 @@ class Trainer():
             prompt_texts=prompt_texts,
             audio_responses=llm_audio_responses,
             text_responses=llm_text_responses,
-            epoch=epoch,
+            step=self.step,
         )
 
         # Log perplexity in Tensorboard.
         audio_perplexity = torch.exp(torch.stack(audio_nlls).mean())
         text_perplexity = torch.exp(torch.stack(text_nlls).mean())
-        self.writer.log_validation_perplexity(audio_perplexity, "audio", epoch)
-        self.writer.log_validation_perplexity(text_perplexity, "text", epoch)
+        self.writer.log_validation_perplexity(audio_perplexity, "audio", self.step)
+        self.writer.log_validation_perplexity(text_perplexity, "text", self.step)
 
         # Save checkpoints.
         save_path = os.path.join(self.checkpoint_save_dir, f"epoch_{epoch}_step_{self.step}.pt")
@@ -429,6 +430,7 @@ class Trainer():
             {
                 "audio_encoder": self.audio_encoder.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
+                "lr_scheduler": self.lr_scheduler.state_dict(),
                 "epoch": epoch,
                 "step": self.step,
             },
