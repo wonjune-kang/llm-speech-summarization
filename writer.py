@@ -6,6 +6,9 @@ class MyWriter(SummaryWriter):
         super(MyWriter, self).__init__(logdir)
         self.sample_rate = config.audio.sampling_rate
 
+    def log_lr(self, lr, step):
+        self.add_scalar("learning_rate", lr, step)
+
     def log_training(self, losses, step):
         for loss_type, value in losses.items():
             self.add_scalar(f"train/{loss_type}", value, step)

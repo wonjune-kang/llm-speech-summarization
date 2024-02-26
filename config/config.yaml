@@ -25,11 +25,11 @@ train:
   num_gpus: 1
   num_workers: 4
   optimizer:
-    lr: 1e-4
+    lr: 5e-5
     beta1: 0.9
     beta2: 0.999
   batch_size: 1
-  grad_accum_interval: 32
+  grad_accum_interval: 16
   epochs: 10
   use_kd_loss: True
   use_fd_loss: True

@@ -88,16 +88,6 @@ class Trainer():
         self.audio_encoder.to(self.device)
         self.llm.to(self.device)
 
-        # Set up optimizer.
-        self.optimizer = torch.optim.AdamW(
-            [
-                {'params': self.audio_encoder.parameters()},
-                {'params': self.llm.parameters()}
-            ],
-            lr=self.config.train.optimizer.lr,
-            betas=(self.config.train.optimizer.beta1, self.config.train.optimizer.beta2),
-        )
-
         # Global training step.
         self.step = 0
 
@@ -106,6 +96,21 @@ class Trainer():
 
         # Number of epochs to train.
         self.num_epochs = self.config.train.epochs
+
+        # Set up optimizer and learning rate scheduler.
+        self.optimizer = torch.optim.AdamW(
+            [
+                {'params': self.audio_encoder.parameters()},
+                {'params': self.llm.parameters()}
+            ],
+            lr=self.config.train.optimizer.lr,
+            betas=(self.config.train.optimizer.beta1, self.config.train.optimizer.beta2),
+        )
+        self.lr_scheduler = torch.optim.lr_scheduler.PolynomialLR(
+            self.optimizer,
+            total_iters=(self.num_epochs * len(self.train_dataloader) // self.grad_accum_interval),
+            power=1.0,
+        )
 
         # Load checkpoint if specified.
         if self.args.checkpoint_path:
@@ -145,8 +150,8 @@ class Trainer():
         self.val_dataset = concatenate_datasets(all_val_datasets)
 
         # NOTE: For debugging only. Comment out below if not debugging.
-        # self.train_dataset = self.train_dataset.select(range(500))
-        # self.val_dataset = self.val_dataset.select(range(500))
+        self.train_dataset = self.train_dataset.select(range(500))
+        self.val_dataset = self.val_dataset.select(range(500))
 
         # Create dataloaders.
         self.train_dataloader = torch.utils.data.DataLoader(
@@ -291,6 +296,7 @@ class Trainer():
                 ):
                     scaler.step(self.optimizer)
                     scaler.update()
+                    self.lr_scheduler.step()
                     self.optimizer.zero_grad()
 
                 self.step += 1
@@ -298,6 +304,7 @@ class Trainer():
                 # Logging.
                 if self.step % self.config.log.log_interval == 0:
                     self.writer.log_training(losses, self.step)
+                    self.writer.log_lr(self.lr_scheduler.get_last_lr()[0], self.step)
 
                 # Perform validation at interval.
                 if self.step % self.config.log.validation_interval == 0:
