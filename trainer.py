@@ -2,12 +2,12 @@ import os
 from tqdm.auto import tqdm
 
 import torch
+import torch.nn.functional as F
 from datasets import load_from_disk, concatenate_datasets
 from transformers import LlamaTokenizer
 
 from model.audio_encoder import AudioEncoder
 from model.audio_llama import AudioLlamaForCausalLM
-# from model.feature_distillation_loss import FeatureDistillationLoss
 from utils import (
     batch_full_embed_sequence,
     collate_audio_batch,
@@ -81,6 +81,9 @@ class Trainer():
         self.kd_loss_weight = self.config.train.kd_loss_weight
         self.fd_loss_weight = self.config.train.fd_loss_weight
 
+        # Connector layer indices for feature distillation loss.
+        self.fd_loss_connector_layers = self.config.train.fd_loss_connector_layers
+
         # Send model to device.
         self.audio_encoder.to(self.device)
         self.llm.to(self.device)
@@ -142,8 +145,8 @@ class Trainer():
         self.val_dataset = concatenate_datasets(all_val_datasets)
 
         # NOTE: For debugging only. Comment out below if not debugging.
-        self.train_dataset = self.train_dataset.select(range(500))
-        self.val_dataset = self.val_dataset.select(range(500))
+        # self.train_dataset = self.train_dataset.select(range(500))
+        # self.val_dataset = self.val_dataset.select(range(500))
 
         # Create dataloaders.
         self.train_dataloader = torch.utils.data.DataLoader(
@@ -175,13 +178,18 @@ class Trainer():
             self.optimizer.zero_grad()
 
             for batch_idx, (
-                padded_audios, audio_len_samples, _, text_input_ids, response_input_ids
+                padded_audios,
+                audio_len_samples,
+                _,
+                text_input_ids,
+                response_input_ids,
+                ctc_pool_ranges,
             ) in enumerate(tqdm(self.train_dataloader)):
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     padded_audios = padded_audios.to(self.device)
 
                     # Compute audio embeddings using audio encoder.
-                    padded_audio_embeds = self.audio_encoder(padded_audios)
+                    padded_audio_embeds = self.audio_encoder(padded_audios, ctc_pool_ranges)
 
                     if self.config.train.batch_size > 1:
                         # Unpad the audio embeddings in preparation for creating
@@ -214,7 +222,7 @@ class Trainer():
                         tokenizer=self.tokenizer,
                         embed_tokens=self.llm.model.embed_tokens,
                         device=self.device,
-                        process_text=True,  # self.use_fd_loss,
+                        process_text=(self.use_kd_loss or self.use_fd_loss),
                     )
 
                     # Feed inputs_embeds to LLM.
@@ -225,10 +233,18 @@ class Trainer():
                         attention_mask=audio_attention_mask,
                     )
 
+                    # Keep track of total loss.
+                    total_loss = 0.0
+                    losses = {}
+
                     # Next token prediction loss from audio input.
                     ntp_loss = llm_audio_output.loss
+                    total_loss += self.ntp_loss_weight * ntp_loss
+                    losses["ntp_loss"] = ntp_loss.item()
 
                     if self.use_kd_loss or self.use_fd_loss:
+                        num_labels = response_input_ids[0].shape[0]
+
                         # Perform forward pass with text inputs for distillation losses.
                         with torch.no_grad():
                             llm_text_output = self.llm(
@@ -238,31 +254,35 @@ class Trainer():
                                 attention_mask=text_attention_mask,
                             )
 
+                        # Knowledge distillation loss on output logits.
                         if self.use_kd_loss:
                             # NOTE: Assumes a batch size of 1.
-                            num_labels = response_input_ids[0].shape[0]
                             kd_loss = soft_cross_entropy(
                                 input=llm_audio_output.logits[:, -num_labels:, :],
                                 target=llm_text_output.logits[:, -num_labels:, :].detach(),
                             )
+                            total_loss += self.kd_loss_weight * kd_loss
+                            losses["kd_loss"] = kd_loss.item()
 
-                        # if self.use_fd_loss:
-                        #     fd_loss = FeatureDistillationLoss(
-                        #         llm_audio_output.hidden_states,
-                        #         llm_text_output.hidden_states,
-                        #     )
+                        # Feature distillation loss on LLM hidden states.
+                        # NOTE: Assumes batch size = 1.
+                        if self.use_fd_loss:
+                            fd_loss = 0.0
+                            for layer_idx in self.fd_loss_connector_layers:
+                                audio_feats = llm_audio_output.hidden_states[layer_idx][
+                                    :, -num_labels:, :
+                                ]
+                                text_feats = llm_text_output.hidden_states[layer_idx][
+                                    :, -num_labels:, :
+                                ]
+                                fd_loss += F.mse_loss(audio_feats, text_feats.detach())
 
-                    # Sum the loss terms.
-                    total_loss = (
-                        self.ntp_loss_weight * ntp_loss
-                        + self.kd_loss_weight * kd_loss
-                        # + self.fd_loss_weight * fd_loss
-                    )
+                            total_loss += self.fd_loss_weight * fd_loss
+                            losses["fd_loss"] = fd_loss.item()
 
                 # Normalize loss to account for gradient accumulation and do backward pass.
                 total_loss /= self.grad_accum_interval
                 scaler.scale(total_loss).backward()
-                # total_loss.backward()
 
                 # Weights update.
                 if (
@@ -271,18 +291,12 @@ class Trainer():
                 ):
                     scaler.step(self.optimizer)
                     scaler.update()
-                    # self.optimizer.step()
                     self.optimizer.zero_grad()
 
                 self.step += 1
 
                 # Logging.
                 if self.step % self.config.log.log_interval == 0:
-                    losses = {
-                        "ntp_loss": ntp_loss.item(),
-                        "kd_loss": kd_loss.item()
-                        # "fd_loss": fd_loss.item(),
-                    }
                     self.writer.log_training(losses, self.step)
 
                 # Perform validation at interval.
@@ -303,14 +317,14 @@ class Trainer():
         llm_audio_responses = []
         llm_text_responses = []
         for sample_idx, (
-            audio, _, texts, text_input_ids, response_input_ids
+            audio, _, texts, text_input_ids, response_input_ids, ctc_pool_ranges
         ) in enumerate(tqdm(self.val_dataloader)):
             with torch.no_grad():
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     audio = audio.to(self.device)
 
                     # Compute audio embeddings using audio encoder.
-                    audio_embeds = self.audio_encoder(audio)
+                    audio_embeds = self.audio_encoder(audio, ctc_pool_ranges)
 
                     # Create the full embedding sequence batch by concatenating
                     # the prompt prefix, audio embeddings, prompt suffix, and

@@ -38,8 +38,6 @@ class AudioEncoder(nn.Module):
 
     def forward(self, audio_input, ctc_pool_ranges):
         encoder_out = self.encoder(audio_input).last_hidden_state  # (B, N, 1024)
-        print("encoder_out", encoder_out.shape)
-        print(len(ctc_pool_ranges[0]))
 
         if self.downsample_method == "pool":
             # (B, N, 1024) -> (B, N/4, 1024) -> (B, N/4, 3072)
@@ -60,7 +58,6 @@ class AudioEncoder(nn.Module):
                     torch.mean(encoder_out[:, startpoint:endpoint, :], dim=1)
                 )
             audio_embeds = torch.stack(pooled_embs, dim=1)
-            print(audio_embeds.shape)
         else:
             raise Exception("Invalid downsampling method for audio encoder.")
 
