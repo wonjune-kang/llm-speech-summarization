@@ -4,6 +4,7 @@ from omegaconf import OmegaConf
 import librosa
 import torch
 from transformers import LlamaTokenizer, AutoTokenizer, HubertForCTC
+from datasets import load_from_disk
 
 from model.audio_encoder import AudioEncoder
 from model.audio_llama import AudioLlamaForCausalLM
@@ -19,7 +20,7 @@ class LLMSpeechTextInference():
         checkpoint = torch.load(audio_encoder_checkpoint, map_location="cpu")
         self.audio_encoder = AudioEncoder(self.config)
         self.audio_encoder.load_state_dict(checkpoint["audio_encoder"])
-        self.audio_encoder.to(self.device)
+        self.audio_encoder.eval().to(self.device)
         print("Loaded audio encoder.\n")
 
         # LLM tokenizer.
@@ -192,7 +193,7 @@ if __name__ == '__main__':
     # Select device for running models.
     device = torch.device(f"cuda:{args.gpu_idx}" if torch.cuda.is_available() else "cpu")
 
-    from datasets import load_from_disk
+    # Load CNN / DailyMail dataset for testing.
     cnn_dailymail = load_from_disk(
         "/u/wjkang/data/cnn_dailymail/cnn_dailymail_lt1600_with_audio.hf"
     )
