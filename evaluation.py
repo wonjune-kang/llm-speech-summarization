@@ -14,7 +14,7 @@ from utils import collate_audio_batch, batch_full_embed_sequence
 
 
 def compute_nlls(inferencer, dataset, device, model_type):
-    assert model_type == "text" or model_type == "audio"
+    assert model_type in ["text", "audio", "cascade"]
 
     test_dataloader = torch.utils.data.DataLoader(
         dataset=dataset,
@@ -36,28 +36,55 @@ def compute_nlls(inferencer, dataset, device, model_type):
                 # Compute audio embeddings using audio encoder.
                 audio_embeds = inferencer.audio_encoder(audio, ctc_pool_ranges)
 
-                # Create the full embedding sequence batch by concatenating
-                # the prompt prefix, audio embeddings, prompt suffix, and
-                # target LLM response.
-                (
-                    full_audio_prompt_sequence,
-                    _,
-                    full_text_prompt_sequence,
-                    _,
-                ) = batch_full_embed_sequence(
-                    all_audio_embeds=audio_embeds,
-                    all_text_input_ids=text_input_ids,
-                    all_response_input_ids=response_input_ids,
-                    tokenizer=inferencer.tokenizer,
-                    embed_tokens=inferencer.llm.model.embed_tokens,
-                    device=device,
-                    process_text=True,
-                )
+                if model_type == "text" or model_type == "audio":
+                    # Create the full embedding sequence batch by concatenating
+                    # the prompt prefix, audio embeddings, prompt suffix, and
+                    # target LLM response.
+                    (
+                        full_audio_prompt_sequence,
+                        _,
+                        full_text_prompt_sequence,
+                        _,
+                    ) = batch_full_embed_sequence(
+                        all_audio_embeds=audio_embeds,
+                        all_text_input_ids=text_input_ids,
+                        all_response_input_ids=response_input_ids,
+                        tokenizer=inferencer.llm_tokenizer,
+                        embed_tokens=inferencer.llm.model.embed_tokens,
+                        device=device,
+                        process_text=True,
+                    )
 
-                if model_type == "text":
-                    prompt_embeds = full_text_prompt_sequence
-                else:
-                    prompt_embeds = full_audio_prompt_sequence
+                    if model_type == "text":
+                        prompt_embeds = full_text_prompt_sequence
+                    else:
+                        prompt_embeds = full_audio_prompt_sequence
+
+                elif model_type == "cascade":
+                    # Perform ASR with HuBERT.
+                    asr_transcript = inferencer.perform_hubert_asr(audio)
+
+                    # Tokenizer ASR transcript.
+                    asr_transcript_input_ids = inferencer.llm_tokenizer(
+                        asr_transcript,
+                        return_tensors="pt",
+                    ).input_ids
+
+                    # Create full embedding sequence
+                    (
+                        _,
+                        _,
+                        prompt_embeds,
+                        _,
+                    ) = batch_full_embed_sequence(
+                        all_audio_embeds=audio_embeds,
+                        all_text_input_ids=asr_transcript_input_ids,
+                        all_response_input_ids=response_input_ids,
+                        tokenizer=inferencer.llm_tokenizer,
+                        embed_tokens=inferencer.llm.model.embed_tokens,
+                        device=device,
+                        process_text=True,
+                    )
 
                 # Feed audio and text prompt sequences to LLM.
                 llm_output = inferencer.llm(
@@ -90,6 +117,16 @@ if __name__ == '__main__':
 
     assert args.model_type in ["text", "audio", "cascade"]
 
+    # Set up Librispeech test sets.
+    librispeech_test_clean = load_from_disk(
+        "/home/gridsan/wjkang/data/librispeech_hf/librispeech_test.clean_with_responses_tokenized_filtered_with_offsets_and_pool_ranges_4.hf"
+    )
+    librispeech_test_other = load_from_disk(
+        "/home/gridsan/wjkang/data/librispeech_hf/librispeech_test.other_with_responses_tokenized_filtered_with_offsets_and_pool_ranges_4.hf"
+    )
+    librispeech_test_clean.set_format(type="torch")
+    librispeech_test_other.set_format(type="torch")
+
     # Set up inferencer.
     config = OmegaConf.load(args.config)
     llm_inferencer = LLMSpeechTextInference(
@@ -98,50 +135,41 @@ if __name__ == '__main__':
         device=device,
     )
 
-    # Set up evaluation metrics.
-    rouge_metric = evaluate.load("rouge")
-    meteor_metric = evaluate.load("meteor")
-    bertscore_metric = evaluate.load("bertscore")
-
-    # Compute perplexity on Librispeech test set.
-    librispeech_test_clean = load_from_disk(
-        "librispeech_test.clean_with_responses_tokenized_filtered_with_offsets_and_pool_ranges_4.hf"
-    )
-    librispeech_test_other = load_from_disk(
-        "librispeech_test.other_with_responses_tokenized_filtered_with_offsets_and_pool_ranges_4.hf"
-    )
-
+    # Compute perplexity on Librispeech.
+    print("\nEvaluating perplexity...")
     test_clean_nlls = compute_nlls(
         inferencer=llm_inferencer,
         dataset=librispeech_test_clean,
         device=device,
-        model_type=args.model_type,  # TODO: Need to add option for cascade...
+        model_type=args.model_type,
     )
     test_other_nlls = compute_nlls(
         inferencer=llm_inferencer,
         dataset=librispeech_test_other,
         device=device,
-        model_type=args.model_type,  # TODO: Need to add option for cascade...
+        model_type=args.model_type,
     )
 
-    test_clean_ppl = torch.exp(torch.stack(test_clean_nlls).mean())
-    test_other_ppl = torch.exp(torch.stack(test_other_nlls).mean())
-    test_all_ppl = torch.exp(torch.stack(test_clean_nlls + test_other_nlls).mean())
+    test_clean_ppl = torch.exp(torch.stack(test_clean_nlls).mean()).item()
+    test_other_ppl = torch.exp(torch.stack(test_other_nlls).mean()).item()
+    test_all_ppl = torch.exp(torch.stack(test_clean_nlls + test_other_nlls).mean()).item()
 
-    print("\nPerplexity")
-    print("test-clean PPL:", test_clean_ppl)
-    print("test-other PPL:", test_other_ppl)
-    print("test-all PPL:", test_all_ppl)
+    print("\nPerplexity:")
+    print("test-clean PPL:", round(test_clean_ppl, 4))
+    print("test-other PPL:", round(test_other_ppl, 4))
+    print("test-all PPL:", round(test_all_ppl, 4))
+    print()
 
     # Perform summarization on CNN / DailyMail articles.
     cnn_dailymail = load_from_disk(
-        "/u/wjkang/data/cnn_dailymail/cnn_dailymail_lt1600_with_audio.hf"
+        "/home/gridsan/wjkang/data/cnn_dailymail/cnn_dailymail_lt1600_with_audio.hf"
     )
 
+    print("\nEvaluating summarization...")
     all_summaries = []
     all_gt_summaries = []
     all_sample_ids = []
-    for i, sample in enumerate(tqdm(cnn_dailymail)):
+    for sample in tqdm(cnn_dailymail):
         sample_id = sample["id"]
         sample_text = sample["article"]
         sample_gt_summary = sample["highlights"]
@@ -168,36 +196,6 @@ if __name__ == '__main__':
             )
         all_summaries.append(llm_summary)
 
-        if i == 5:
-            break
-
-    rouge = rouge_metric.compute(predictions=all_summaries, references=all_gt_summaries)
-    meteor = meteor_metric.compute(predictions=all_summaries, references=all_gt_summaries)
-    bertscore = bertscore_metric.compute(
-        predictions=all_summaries,
-        references=all_gt_summaries,
-        lang="en",
-        device=device,
-    )
-
-    print("\nSummarization metric results:")
-
-    print("ROUGE")
-    for metric, value in rouge.items():
-        print(metric, round(value, 4))
-    print()
-
-    print("METEOR")
-    for metric, value in meteor.items():
-        print(metric, round(value, 4))
-    print()
-
-    print("BERTScore")
-    print("precision", round(np.mean(bertscore["precision"]), 4))
-    print("recall", round(np.mean(bertscore["recall"]), 4))
-    print("f1", round(np.mean(bertscore["f1"]), 4))
-    print()
-
     # Save inference outputs for faster evaluation next time.
     save_info = {}
     for sample_id, llm_summary, gt_summary in zip(
@@ -218,3 +216,35 @@ if __name__ == '__main__':
     with open(save_filename, 'wb') as f:
         pickle.dump(save_info, f)
     print(f"Saved computed summaries to file {save_filename}.")
+
+    # # Set up evaluation metrics.
+    # rouge_metric = evaluate.load("rouge")
+    # meteor_metric = evaluate.load("meteor")
+    # bertscore_metric = evaluate.load("bertscore")
+
+    # rouge = rouge_metric.compute(predictions=all_summaries, references=all_gt_summaries)
+    # meteor = meteor_metric.compute(predictions=all_summaries, references=all_gt_summaries)
+    # bertscore = bertscore_metric.compute(
+    #     predictions=all_summaries,
+    #     references=all_gt_summaries,
+    #     lang="en",
+    #     device=device,
+    # )
+
+    # print("\nSummarization metrics:")
+
+    # print("ROUGE")
+    # for metric, value in rouge.items():
+    #     print(metric, round(value, 4))
+    # print()
+
+    # print("METEOR")
+    # for metric, value in meteor.items():
+    #     print(metric, round(value, 4))
+    # print()
+
+    # print("BERTScore")
+    # print("Precision:", round(np.mean(bertscore["precision"]), 4))
+    # print("Recall:", round(np.mean(bertscore["recall"]), 4))
+    # print("F1:", round(np.mean(bertscore["f1"]), 4))
+    # print()

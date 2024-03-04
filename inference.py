@@ -1,7 +1,6 @@
 import argparse
 from omegaconf import OmegaConf
 
-import librosa
 import torch
 from transformers import LlamaTokenizer, AutoTokenizer, HubertForCTC
 from datasets import load_from_disk
@@ -48,8 +47,8 @@ class LLMSpeechTextInference():
         logits = self.hubert(audio).logits[0]
         pred_ids = torch.argmax(logits, axis=-1)
 
-        transcription = self.hubert_tokenizer.decode(pred_ids)
-        return transcription
+        transcript = self.hubert_tokenizer.decode(pred_ids).lower()
+        return transcript
 
     def get_ctc_pool_ranges(self, audio, pool_range=4):
         # forward sample through model to get greedily predicted transcription ids
@@ -100,7 +99,7 @@ class LLMSpeechTextInference():
                     inputs_embeds=inputs_embeds,
                     # do_sample=True,
                     # temperature=0.7,
-                    max_new_tokens=1024,
+                    max_new_tokens=256,
                 )
 
         response_text = self.llm_tokenizer.batch_decode(
@@ -131,7 +130,7 @@ class LLMSpeechTextInference():
     def generate_asr_cascade_response(self, audio, text_prompt=""):
         with torch.no_grad():
             audio_tensor = torch.tensor(audio).float().unsqueeze(0).to(self.device)
-            asr_transcript = self.perform_hubert_asr(audio_tensor).lower()
+            asr_transcript = self.perform_hubert_asr(audio_tensor)
             llm_response = self.generate_text_response(text_prompt+asr_transcript)
 
         if "\n" in llm_response:
@@ -216,13 +215,11 @@ if __name__ == '__main__':
         print(text_prompt+sample_text)
         print()
 
-        # sample_text = "Tell me about the political ideologies of Winston Churchill."
         text_response = llm_inferencer.generate_text_response(text_prompt+sample_text)
         print("TEXT RESPONSE")
         print(text_response)
         print()
 
-        # sample_audio, sr = librosa.load("churchill_test.m4a", sr=16000)
         cascade_response = llm_inferencer.generate_asr_cascade_response(
             audio=sample_audio,
             text_prompt=text_prompt,
