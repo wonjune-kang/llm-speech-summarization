@@ -88,8 +88,9 @@ class Trainer():
         self.audio_encoder.to(self.device)
         self.llm.to(self.device)
 
-        # Global training step.
+        # Global training step and starting epoch for training run.
         self.step = 0
+        self.start_epoch = 0
 
         # Gradient accumulation interval.
         self.grad_accum_interval = self.config.train.grad_accum_interval
@@ -121,6 +122,7 @@ class Trainer():
         self.audio_encoder.load_state_dict(checkpoint["audio_encoder"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+        self.start_epoch = checkpoint["epoch"]
         self.step = checkpoint["step"]
 
         # If training on GPU and loading optimizer state_dict, manually move
@@ -130,6 +132,8 @@ class Trainer():
                 for k, v in state.items():
                     if torch.is_tensor(v):
                         state[k] = v.cuda(self.args.gpu_idx)
+
+        print(f"Loaded checkpoint from {checkpoint_path}.\n")
 
     def get_dataloaders(self):
         # Load train datasets and combine into one Dataset object.
@@ -176,7 +180,7 @@ class Trainer():
         # GradScaler for mixed precision training.
         scaler = torch.cuda.amp.GradScaler()
 
-        for epoch in range(self.num_epochs):
+        for epoch in range(self.start_epoch, self.start_epoch+self.num_epochs):
             print(f"Epoch {epoch}")
 
             # Training loop.
