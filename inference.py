@@ -97,6 +97,8 @@ class LLMSpeechTextInference():
                 generate_ids = self.llm.generate(
                     input_ids=None,
                     inputs_embeds=inputs_embeds,
+                    # do_sample=True,
+                    # temperature=0.7,
                     max_new_tokens=1024,
                 )
 
@@ -109,21 +111,31 @@ class LLMSpeechTextInference():
         return response_text
 
     def generate_text_response(self, text):
-        text_tokens = self.llm_tokenizer(text, return_tensors='pt').input_ids.to(self.device)
-        text_embeds = self.llm.model.embed_tokens(text_tokens)
-        text_prompt_emb_sequence = merge_prompt_tokens(
-            inputs_embeds=text_embeds,
-            tokenizer=self.llm_tokenizer,
-            embed_tokens=self.llm.model.embed_tokens,
-            device=self.device,
-        )
-        llm_response = self.generate_llm_response(text_prompt_emb_sequence)
+        with torch.no_grad():
+            text_tokens = self.llm_tokenizer(text, return_tensors='pt').input_ids.to(self.device)
+            text_embeds = self.llm.model.embed_tokens(text_tokens)
+            text_prompt_emb_sequence = merge_prompt_tokens(
+                inputs_embeds=text_embeds,
+                tokenizer=self.llm_tokenizer,
+                embed_tokens=self.llm.model.embed_tokens,
+                device=self.device,
+            )
+            llm_response = self.generate_llm_response(text_prompt_emb_sequence)[0]
+
+        if "\n" in llm_response:
+            llm_response = llm_response.split("\n")[0]
+
         return llm_response
 
     def generate_asr_cascade_response(self, audio, text_prompt=""):
-        audio_tensor = torch.tensor(audio).float().unsqueeze(0).to(self.device)
-        asr_transcript = self.perform_hubert_asr(audio_tensor).lower()
-        llm_response = self.generate_text_response(text_prompt+asr_transcript)
+        with torch.no_grad():
+            audio_tensor = torch.tensor(audio).float().unsqueeze(0).to(self.device)
+            asr_transcript = self.perform_hubert_asr(audio_tensor).lower()
+            llm_response = self.generate_text_response(text_prompt+asr_transcript)
+
+        if "\n" in llm_response:
+            llm_response = llm_response.split("\n")[0]
+
         return llm_response
 
     # def generate_audio_response(self, audio):
@@ -140,24 +152,31 @@ class LLMSpeechTextInference():
     #     return llm_response
 
     def generate_audio_response(self, audio, text_prompt=""):
-        audio_tensor = torch.tensor(audio).float().unsqueeze(0).to(self.device)
-        ctc_pool_ranges = self.get_ctc_pool_ranges(audio_tensor)
-        audio_embeds = self.audio_encoder(audio_tensor, [ctc_pool_ranges])
+        with torch.no_grad():
+            audio_tensor = torch.tensor(audio).float().unsqueeze(0).to(self.device)
+            ctc_pool_ranges = self.get_ctc_pool_ranges(audio_tensor)
+            audio_embeds = self.audio_encoder(audio_tensor, [ctc_pool_ranges])
 
-        if len(text_prompt) > 0:
-            text_tokens = self.llm_tokenizer(text_prompt, return_tensors='pt').input_ids.to(self.device)
-            text_embeds = self.llm.model.embed_tokens(text_tokens)
-            combined_embeds = torch.cat([text_embeds, audio_embeds], dim=1)
-        else:
-            combined_embeds = audio_embeds
+            if len(text_prompt) > 0:
+                text_tokens = self.llm_tokenizer(
+                    text_prompt, return_tensors='pt'
+                ).input_ids.to(self.device)
+                text_embeds = self.llm.model.embed_tokens(text_tokens)
+                combined_embeds = torch.cat([text_embeds, audio_embeds], dim=1)
+            else:
+                combined_embeds = audio_embeds
 
-        prompt_emb_sequence = merge_prompt_tokens(
-            inputs_embeds=combined_embeds,
-            tokenizer=self.llm_tokenizer,
-            embed_tokens=self.llm.model.embed_tokens,
-            device=self.device,
-        )
-        llm_response = self.generate_llm_response(prompt_emb_sequence)
+            prompt_emb_sequence = merge_prompt_tokens(
+                inputs_embeds=combined_embeds,
+                tokenizer=self.llm_tokenizer,
+                embed_tokens=self.llm.model.embed_tokens,
+                device=self.device,
+            )
+            llm_response = self.generate_llm_response(prompt_emb_sequence)[0]
+
+        if "\n" in llm_response:
+            llm_response = llm_response.split("\n")[0]
+
         return llm_response
 
 
@@ -174,14 +193,9 @@ if __name__ == '__main__':
     device = torch.device(f"cuda:{args.gpu_idx}" if torch.cuda.is_available() else "cpu")
 
     from datasets import load_from_disk
-    cnn_dailymail = load_from_disk("/u/wjkang/data/cnn_dailymail/cnn_dailymail_lt1600_with_audio.hf")
-    sample = cnn_dailymail[0]
-    sample_text = sample["article"]
-    sample_audio = sample["tts_audio"]
-
-    text_prompt = "Summarize the following article in 4 sentences or less: "
-    print("FULL TEXT PROMPT")
-    print(text_prompt+sample_text)
+    cnn_dailymail = load_from_disk(
+        "/u/wjkang/data/cnn_dailymail/cnn_dailymail_lt1600_with_audio.hf"
+    )
 
     # Set up inferencer.
     config = OmegaConf.load(args.config)
@@ -191,25 +205,35 @@ if __name__ == '__main__':
         device=device,
     )
 
-    # sample_text = "Tell me about the political ideologies of Winston Churchill."
-    text_response = llm_inferencer.generate_text_response(text_prompt+sample_text)
-    print("TEXT RESPONSE")
-    print(text_response)
-    print()
+    for i in range(5):
+        sample = cnn_dailymail[i]
+        sample_text = sample["article"]
+        sample_audio = sample["tts_audio"]
 
-    # sample_audio, sr = librosa.load("churchill_test.m4a", sr=16000)
-    cascade_response = llm_inferencer.generate_asr_cascade_response(
-        audio=sample_audio,
-        text_prompt=text_prompt,
-    )
-    print("CASCADE RESPONSE")
-    print(cascade_response)
-    print()
+        text_prompt = "Summarize the following article in 4 sentences or less: "
+        print("FULL TEXT PROMPT")
+        print(text_prompt+sample_text)
+        print()
 
-    audio_response = llm_inferencer.generate_audio_response(
-        audio=sample_audio,
-        text_prompt=text_prompt,
-    )
-    print("AUDIO RESPONSE")
-    print(audio_response)
-    print()
+        # sample_text = "Tell me about the political ideologies of Winston Churchill."
+        text_response = llm_inferencer.generate_text_response(text_prompt+sample_text)
+        print("TEXT RESPONSE")
+        print(text_response)
+        print()
+
+        # sample_audio, sr = librosa.load("churchill_test.m4a", sr=16000)
+        cascade_response = llm_inferencer.generate_asr_cascade_response(
+            audio=sample_audio,
+            text_prompt=text_prompt,
+        )
+        print("CASCADE RESPONSE")
+        print(cascade_response)
+        print()
+
+        audio_response = llm_inferencer.generate_audio_response(
+            audio=sample_audio,
+            text_prompt=text_prompt,
+        )
+        print("AUDIO RESPONSE")
+        print(audio_response)
+        print()
