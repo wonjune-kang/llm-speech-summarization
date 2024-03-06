@@ -19,8 +19,6 @@ from utils import (
 
 
 def collate_text_cascade_batch(data):
-    # data contains 'audio', 'text', 'text_input_ids', 'llama2_response',
-    # 'response_input_ids', and 'pool_ranges_4'
     raw_audios = [x['audio']['array'] for x in data]
     prompt_texts = [x['text'] for x in data]
     llm_responses = [x['llama2_response'] for x in data]
@@ -138,7 +136,7 @@ def compute_audio_nlls(inferencer, dataset, device):
                     process_text=True,
                 )
 
-                # Feed audio and text prompt sequences to LLM.
+                # Feed audio prompt sequence to LLM.
                 llm_output = inferencer.llm(
                     inputs_embeds=full_audio_prompt_sequence,
                     labels=response_input_ids[0].unsqueeze(0).to(device),
@@ -187,54 +185,52 @@ if __name__ == '__main__':
         device=device,
     )
 
-    # Compute perplexity on Librispeech.
-    print("Evaluating perplexity...")
+    # # Compute perplexity on Librispeech.
+    # print("Evaluating perplexity...")
 
-    if args.model_type == "text":
-        test_clean_nlls = compute_text_nlls(
-            inferencer=llm_inferencer,
-            dataset=librispeech_test_clean,
-            device=device,
-        )
-        test_other_nlls = compute_text_nlls(
-            inferencer=llm_inferencer,
-            dataset=librispeech_test_other,
-            device=device,
-        )
-    elif args.model_type == "audio":
-        test_clean_nlls = compute_audio_nlls(
-            inferencer=llm_inferencer,
-            dataset=librispeech_test_clean,
-            device=device,
-        )
-        test_other_nlls = compute_audio_nlls(
-            inferencer=llm_inferencer,
-            dataset=librispeech_test_other,
-            device=device,
-        )
-    elif args.model_type == "cascade":
-        test_clean_nlls = compute_cascade_nlls(
-            inferencer=llm_inferencer,
-            dataset=librispeech_test_clean,
-            device=device,
-        )
-        test_other_nlls = compute_cascade_nlls(
-            inferencer=llm_inferencer,
-            dataset=librispeech_test_other,
-            device=device,
-        )
+    # if args.model_type == "text":
+    #     test_clean_nlls = compute_text_nlls(
+    #         inferencer=llm_inferencer,
+    #         dataset=librispeech_test_clean,
+    #         device=device,
+    #     )
+    #     test_other_nlls = compute_text_nlls(
+    #         inferencer=llm_inferencer,
+    #         dataset=librispeech_test_other,
+    #         device=device,
+    #     )
+    # elif args.model_type == "audio":
+    #     test_clean_nlls = compute_audio_nlls(
+    #         inferencer=llm_inferencer,
+    #         dataset=librispeech_test_clean,
+    #         device=device,
+    #     )
+    #     test_other_nlls = compute_audio_nlls(
+    #         inferencer=llm_inferencer,
+    #         dataset=librispeech_test_other,
+    #         device=device,
+    #     )
+    # elif args.model_type == "cascade":
+    #     test_clean_nlls = compute_cascade_nlls(
+    #         inferencer=llm_inferencer,
+    #         dataset=librispeech_test_clean,
+    #         device=device,
+    #     )
+    #     test_other_nlls = compute_cascade_nlls(
+    #         inferencer=llm_inferencer,
+    #         dataset=librispeech_test_other,
+    #         device=device,
+    #     )
 
-    test_clean_ppl = torch.exp(torch.stack(test_clean_nlls).mean()).item()
-    test_other_ppl = torch.exp(torch.stack(test_other_nlls).mean()).item()
-    test_all_ppl = torch.exp(torch.stack(test_clean_nlls + test_other_nlls).mean()).item()
+    # test_clean_ppl = torch.exp(torch.stack(test_clean_nlls).mean()).item()
+    # test_other_ppl = torch.exp(torch.stack(test_other_nlls).mean()).item()
+    # test_all_ppl = torch.exp(torch.stack(test_clean_nlls + test_other_nlls).mean()).item()
 
-    print("\nPerplexity:")
-    print("test-clean PPL:", round(test_clean_ppl, 4))
-    print("test-other PPL:", round(test_other_ppl, 4))
-    print("test-all PPL:", round(test_all_ppl, 4))
-    print()
-
-    exit()
+    # print("\nPerplexity:")
+    # print("test-clean PPL:", round(test_clean_ppl, 4))
+    # print("test-other PPL:", round(test_other_ppl, 4))
+    # print("test-all PPL:", round(test_all_ppl, 4))
+    # print()
 
     # Perform summarization on CNN / DailyMail articles.
     cnn_dailymail = load_from_disk(
@@ -259,16 +255,16 @@ if __name__ == '__main__':
 
         # Prompt the LLM to perform summarization.
         if args.model_type == "text":
-            llm_summary = llm_inferencer.generate_text_response(text_prompt+sample_text)
+            llm_summary = llm_inferencer.generate_text_response(text_prompt + sample_text)
         elif args.model_type == "cascade":
             llm_summary = llm_inferencer.generate_asr_cascade_response(
                 audio=sample_audio,
-                text_prompt=text_prompt,
+                additional_text_prompt=text_prompt,
             )
         elif args.model_type == "audio":
             llm_summary = llm_inferencer.generate_audio_response(
                 audio=sample_audio,
-                text_prompt=text_prompt,
+                additional_text_prompt=text_prompt,
             )
         all_summaries.append(llm_summary)
 
@@ -284,26 +280,26 @@ if __name__ == '__main__':
         if len(all_summaries) == 5:
             break
 
-    # Save inference outputs for faster evaluation next time.
-    save_info = {}
-    for sample_id, llm_summary, gt_summary in zip(
-        all_sample_ids, all_summaries, all_gt_summaries
-    ):
-        save_info[sample_id] = {
-            "gt_summary": gt_summary,
-            "llm_summary": llm_summary,
-        }
+    # # Save inference outputs for faster evaluation next time.
+    # save_info = {}
+    # for sample_id, llm_summary, gt_summary in zip(
+    #     all_sample_ids, all_summaries, all_gt_summaries
+    # ):
+    #     save_info[sample_id] = {
+    #         "gt_summary": gt_summary,
+    #         "llm_summary": llm_summary,
+    #     }
 
-    if args.model_type == "text":
-        save_filename = "text_summaries.pkl"
-    elif args.model_type == "cascade":
-        save_filename = "cascade_summaries.pkl"
-    else:
-        save_filename = f"{args.audio_encoder_checkpoint[:-3]}_summaries.pkl"
+    # if args.model_type == "text":
+    #     save_filename = "text_summaries.pkl"
+    # elif args.model_type == "cascade":
+    #     save_filename = "cascade_summaries.pkl"
+    # else:
+    #     save_filename = f"{args.audio_encoder_checkpoint[:-3]}_summaries.pkl"
 
-    with open(save_filename, 'wb') as f:
-        pickle.dump(save_info, f)
-    print(f"Saved computed summaries to file {save_filename}.")
+    # with open(save_filename, 'wb') as f:
+    #     pickle.dump(save_info, f)
+    # print(f"Saved computed summaries to file {save_filename}.")
 
     # # Set up evaluation metrics.
     # rouge_metric = evaluate.load("rouge")

@@ -7,7 +7,7 @@ from datasets import load_from_disk
 
 from model.audio_encoder import AudioEncoder
 from model.audio_llama import AudioLlamaForCausalLM
-from utils import merge_prompt_tokens
+from utils import merge_prompt_tokens, PROMPT_PREFIX, PROMPT_SUFFIX
 
 
 class LLMSpeechTextInference():
@@ -37,45 +37,47 @@ class LLMSpeechTextInference():
         self.llm.to(self.device)
         print("Loaded LLM.\n")
 
+        # Load HuBERT ASR model for getting CTC offsets.
         self.hubert_tokenizer = AutoTokenizer.from_pretrained("facebook/hubert-large-ls960-ft")
         self.hubert = HubertForCTC.from_pretrained("facebook/hubert-large-ls960-ft").to(device)
         self.hubert.to(self.device)
         print("Loaded HuBERT.\n")
 
     def perform_hubert_asr(self, audio):
-        # forward sample through model to get greedily predicted transcription ids
+        # Feed audio through model to get greedily predicted transcription IDs.
         logits = self.hubert(audio).logits[0]
         pred_ids = torch.argmax(logits, axis=-1)
 
+        # Decode transcription IDs to get text transcript.
+        # NOTE: Always converts to lower case.
         transcript = self.hubert_tokenizer.decode(pred_ids).lower()
         return transcript
 
     def get_ctc_pool_ranges(self, audio, pool_range=4):
-        # forward sample through model to get greedily predicted transcription ids
+        # Feed audio through model to get greedily predicted transcription IDs.
         logits = self.hubert(audio).logits[0]
         pred_ids = torch.argmax(logits, axis=-1)
 
-        outputs = self.hubert_tokenizer.decode(
-            pred_ids,
-            output_word_offsets=True,
-            # output_char_offsets=True,
-        )
+        # Perform decoding to get CTC offsets for each predicted word.
+        outputs = self.hubert_tokenizer.decode(pred_ids, output_word_offsets=True)
         word_offsets = outputs.word_offsets
-
         ctc_word_offsets = [
             (word['start_offset'], word['end_offset']) for word in word_offsets
         ]
 
+        # Add offset ranges for silence in between words. The first element of
+        # each tuple is a flag denoting whether the offset corresponds to
+        # a word (1) or silence (0).
         all_word_offsets = [(0, 0, ctc_word_offsets[0][0])]
         for i in range(len(ctc_word_offsets)-1):
             all_word_offsets.append((1, ctc_word_offsets[i][0], ctc_word_offsets[i][1]))
             all_word_offsets.append((0, ctc_word_offsets[i][1], ctc_word_offsets[i+1][0]))
-
         all_word_offsets.append((1, ctc_word_offsets[-1][0], ctc_word_offsets[-1][1]))
         all_word_offsets.append(
             (0, ctc_word_offsets[-1][1], ctc_word_offsets[-1][1] + (pool_range * 2))
         )
 
+        # Aggregate the offsets into pooling ranges for the audio encoder.
         ctc_pool_ranges = []
         for is_word, start_offset, end_offset in all_word_offsets:
             if is_word == 1:
@@ -93,7 +95,7 @@ class LLMSpeechTextInference():
     def generate_llm_response(self, inputs_embeds):
         with torch.no_grad():
             with torch.autocast(device_type='cuda', dtype=torch.float16):
-                # Generate
+                # NOTE: Using greedy decoding for generation (no sampling).
                 generate_ids = self.llm.generate(
                     input_ids=None,
                     inputs_embeds=inputs_embeds,
@@ -110,62 +112,69 @@ class LLMSpeechTextInference():
 
         return response_text
 
-    def generate_text_response(self, text):
-        with torch.no_grad():
-            text_tokens = self.llm_tokenizer(text, return_tensors='pt').input_ids.to(self.device)
-            text_embeds = self.llm.model.embed_tokens(text_tokens)
-            text_prompt_emb_sequence = merge_prompt_tokens(
-                inputs_embeds=text_embeds,
-                tokenizer=self.llm_tokenizer,
-                embed_tokens=self.llm.model.embed_tokens,
-                device=self.device,
-            )
-            llm_response = self.generate_llm_response(text_prompt_emb_sequence)[0]
+    def generate_text_response(self, input_text):
+        # Create full prompt for instruction-tuned LLM.
+        full_text_prompt = f"{PROMPT_PREFIX} {input_text}{PROMPT_SUFFIX} "
 
+        with torch.no_grad():
+            # Tokenize and get embeddings for the full text prompt.
+            prompt_input_ids = self.llm_tokenizer(
+                full_text_prompt, return_tensors='pt'
+            ).input_ids.to(self.device)
+            prompt_embeds = self.llm.model.embed_tokens(prompt_input_ids)
+
+            # Generate the LLM response.
+            llm_response = self.generate_llm_response(prompt_embeds)[0]
+
+        # HACK: Greedy decoding can cause the LLM to continuously output the
+        # the same thing over and over. These are usually split by the "\n"
+        # character, so we take the first paragraph as the LLM's response to
+        # deal with cases in which this happens.
         if "\n" in llm_response:
             llm_response = llm_response.split("\n")[0]
 
         return llm_response
 
-    def generate_asr_cascade_response(self, audio, text_prompt=""):
+    def generate_asr_cascade_response(self, audio, additional_text_prompt=""):
         with torch.no_grad():
+            # Perform ASR using HuBERT.
             audio_tensor = torch.tensor(audio).float().unsqueeze(0).to(self.device)
             asr_transcript = self.perform_hubert_asr(audio_tensor)
-            llm_response = self.generate_text_response(text_prompt+asr_transcript)
 
-        if "\n" in llm_response:
-            llm_response = llm_response.split("\n")[0]
+            # Combine the transcript with any additional text prompt.
+            # NOTE: Assumes that the text prompt always comes before the
+            # transcribed text.
+            full_text = additional_text_prompt + asr_transcript
+            llm_response = self.generate_text_response(full_text)
 
         return llm_response
 
-    # def generate_audio_response(self, audio):
-    #     audio_tensor = torch.tensor(audio).float().unsqueeze(0).to(self.device)
-    #     ctc_pool_ranges = self.get_ctc_pool_ranges(audio_tensor)
-    #     audio_embeds = self.audio_encoder(audio_tensor, [ctc_pool_ranges])
-    #     audio_prompt_emb_sequence = merge_prompt_tokens(
-    #         inputs_embeds=audio_embeds,
-    #         tokenizer=self.llm_tokenizer,
-    #         embed_tokens=self.llm.model.embed_tokens,
-    #         device=self.device,
-    #     )
-    #     llm_response = self.generate_llm_response(audio_prompt_emb_sequence)
-    #     return llm_response
-
-    def generate_audio_response(self, audio, text_prompt=""):
+    def generate_audio_response(self, audio, additional_text_prompt=""):
         with torch.no_grad():
+            # Get the CTC pooling ranges for the audio.
             audio_tensor = torch.tensor(audio).float().unsqueeze(0).to(self.device)
             ctc_pool_ranges = self.get_ctc_pool_ranges(audio_tensor)
+
+            # Get embeddings from the audio encoder.
             audio_embeds = self.audio_encoder(audio_tensor, [ctc_pool_ranges])
 
-            if len(text_prompt) > 0:
-                text_tokens = self.llm_tokenizer(
-                    text_prompt, return_tensors='pt'
-                ).input_ids.to(self.device)
-                text_embeds = self.llm.model.embed_tokens(text_tokens)
+            # Combine the audio embeddings with any additional text prompt.
+            # NOTE: Assumes that the text prompt always comes before the audio.
+            if len(additional_text_prompt) > 0:
+                # Take elements [1:] to remove start of sentence token.
+                additional_text_input_ids = self.llm_tokenizer(
+                    additional_text_prompt, return_tensors='pt'
+                ).input_ids[:, 1:].to(self.device)
+
+                # Get embeddings corresponding to additional text prompt and
+                # concatenate with audio embeddings.
+                text_embeds = self.llm.model.embed_tokens(additional_text_input_ids)
                 combined_embeds = torch.cat([text_embeds, audio_embeds], dim=1)
             else:
+                # Otherwise, just use the audio embeddings.
                 combined_embeds = audio_embeds
 
+            # Get the full embedding sequence and generate the LLM response
             prompt_emb_sequence = merge_prompt_tokens(
                 inputs_embeds=combined_embeds,
                 tokenizer=self.llm_tokenizer,
@@ -174,6 +183,10 @@ class LLMSpeechTextInference():
             )
             llm_response = self.generate_llm_response(prompt_emb_sequence)[0]
 
+        # HACK: Greedy decoding can cause the LLM to continuously output the
+        # the same thing over and over. These are usually split by the "\n"
+        # character, so we take the first paragraph as the LLM's response to
+        # deal with cases in which this happens.
         if "\n" in llm_response:
             llm_response = llm_response.split("\n")[0]
 
