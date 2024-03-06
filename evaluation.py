@@ -10,12 +10,96 @@ import evaluate
 from datasets import load_from_disk
 
 from inference import LLMSpeechTextInference
-from utils import collate_audio_batch, batch_full_embed_sequence
+from utils import (
+    batch_full_embed_sequence,
+    collate_audio_batch,
+    PROMPT_PREFIX,
+    PROMPT_SUFFIX,
+)
 
 
-def compute_nlls(inferencer, dataset, device, model_type):
-    assert model_type in ["text", "audio", "cascade"]
+def collate_text_cascade_batch(data):
+    # data contains 'audio', 'text', 'text_input_ids', 'llama2_response',
+    # 'response_input_ids', and 'pool_ranges_4'
+    raw_audios = [x['audio']['array'] for x in data]
+    prompt_texts = [x['text'] for x in data]
+    llm_responses = [x['llama2_response'] for x in data]
+    response_input_ids = [x['response_input_ids'] for x in data]
+    return raw_audios, prompt_texts, llm_responses, response_input_ids
 
+
+def compute_text_nlls(inferencer, dataset, device):
+    print("Text NLLs")
+    test_dataloader = torch.utils.data.DataLoader(
+        dataset=dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+        collate_fn=collate_text_cascade_batch,
+    )
+
+    nlls = []
+    for _, prompt_texts, llm_responses, response_input_ids in tqdm(test_dataloader):
+        with torch.no_grad():
+            with torch.autocast(device_type='cuda', dtype=torch.float16):
+                text = prompt_texts[0].lower()
+                response = llm_responses[0]
+                response_ids = response_input_ids[0]
+
+                text_seq = f"{PROMPT_PREFIX} {text}{PROMPT_SUFFIX} {response}"
+                text_input_ids = inferencer.llm_tokenizer(
+                    text_seq,
+                    return_tensors="pt",
+                ).input_ids
+
+                llm_output = inferencer.llm(
+                    input_ids=text_input_ids.to(device),
+                    labels=response_ids.unsqueeze(0).to(device),
+                )
+                nlls.append(llm_output.loss)
+
+    return nlls
+
+
+def compute_cascade_nlls(inferencer, dataset, device):
+    print("Cascade NLLs")
+    test_dataloader = torch.utils.data.DataLoader(
+        dataset=dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+        collate_fn=collate_text_cascade_batch,
+    )
+
+    nlls = []
+    for audios, _, llm_responses, response_input_ids in tqdm(test_dataloader):
+        with torch.no_grad():
+            with torch.autocast(device_type='cuda', dtype=torch.float16):
+                audio = audios[0]
+                response = llm_responses[0]
+                response_ids = response_input_ids[0]
+
+                # Perform ASR with HuBERT.
+                asr_transcript = inferencer.perform_hubert_asr(audio.unsqueeze(0).to(device))
+
+                text_seq = f"{PROMPT_PREFIX} {asr_transcript}{PROMPT_SUFFIX} {response}"
+                text_input_ids = inferencer.llm_tokenizer(
+                    text_seq,
+                    return_tensors="pt",
+                ).input_ids
+
+                llm_output = inferencer.llm(
+                    input_ids=text_input_ids.to(device),
+                    labels=response_ids.unsqueeze(0).to(device),
+                )
+                nlls.append(llm_output.loss)
+
+    return nlls
+
+
+def compute_audio_nlls(inferencer, dataset, device):
     test_dataloader = torch.utils.data.DataLoader(
         dataset=dataset,
         batch_size=1,
@@ -36,66 +120,34 @@ def compute_nlls(inferencer, dataset, device, model_type):
                 # Compute audio embeddings using audio encoder.
                 audio_embeds = inferencer.audio_encoder(audio, ctc_pool_ranges)
 
-                if model_type == "text" or model_type == "audio":
-                    # Create the full embedding sequence batch by concatenating
-                    # the prompt prefix, audio embeddings, prompt suffix, and
-                    # target LLM response.
-                    (
-                        full_audio_prompt_sequence,
-                        _,
-                        full_text_prompt_sequence,
-                        _,
-                    ) = batch_full_embed_sequence(
-                        all_audio_embeds=audio_embeds,
-                        all_text_input_ids=text_input_ids,
-                        all_response_input_ids=response_input_ids,
-                        tokenizer=inferencer.llm_tokenizer,
-                        embed_tokens=inferencer.llm.model.embed_tokens,
-                        device=device,
-                        process_text=True,
-                    )
-
-                    if model_type == "text":
-                        prompt_embeds = full_text_prompt_sequence
-                    else:
-                        prompt_embeds = full_audio_prompt_sequence
-
-                elif model_type == "cascade":
-                    # Perform ASR with HuBERT.
-                    asr_transcript = inferencer.perform_hubert_asr(audio)
-
-                    # Tokenizer ASR transcript.
-                    asr_transcript_input_ids = inferencer.llm_tokenizer(
-                        asr_transcript,
-                        return_tensors="pt",
-                    ).input_ids
-
-                    # Create full embedding sequence
-                    (
-                        _,
-                        _,
-                        prompt_embeds,
-                        _,
-                    ) = batch_full_embed_sequence(
-                        all_audio_embeds=audio_embeds,
-                        all_text_input_ids=asr_transcript_input_ids,
-                        all_response_input_ids=response_input_ids,
-                        tokenizer=inferencer.llm_tokenizer,
-                        embed_tokens=inferencer.llm.model.embed_tokens,
-                        device=device,
-                        process_text=True,
-                    )
+                # Create the full embedding sequence batch by concatenating
+                # the prompt prefix, audio embeddings, prompt suffix, and
+                # target LLM response.
+                (
+                    full_audio_prompt_sequence,
+                    _,
+                    full_text_prompt_sequence,
+                    _,
+                ) = batch_full_embed_sequence(
+                    all_audio_embeds=audio_embeds,
+                    all_text_input_ids=text_input_ids,
+                    all_response_input_ids=response_input_ids,
+                    tokenizer=inferencer.llm_tokenizer,
+                    embed_tokens=inferencer.llm.model.embed_tokens,
+                    device=device,
+                    process_text=True,
+                )
 
                 # Feed audio and text prompt sequences to LLM.
                 llm_output = inferencer.llm(
-                    inputs_embeds=prompt_embeds,
+                    inputs_embeds=full_audio_prompt_sequence,
                     labels=response_input_ids[0].unsqueeze(0).to(device),
                 )
 
                 # Next token prediction losses for audio and text sequence inputs.
                 ntp_loss = llm_output.loss
 
-        # Compute perplexity from NLLs.
+        # Get NLLs to compute perplexity.
         nlls.append(ntp_loss)
 
     return nlls
@@ -136,19 +188,41 @@ if __name__ == '__main__':
     )
 
     # Compute perplexity on Librispeech.
-    print("\nEvaluating perplexity...")
-    test_clean_nlls = compute_nlls(
-        inferencer=llm_inferencer,
-        dataset=librispeech_test_clean,
-        device=device,
-        model_type=args.model_type,
-    )
-    test_other_nlls = compute_nlls(
-        inferencer=llm_inferencer,
-        dataset=librispeech_test_other,
-        device=device,
-        model_type=args.model_type,
-    )
+    print("Evaluating perplexity...")
+
+    if args.model_type == "text":
+        test_clean_nlls = compute_text_nlls(
+            inferencer=llm_inferencer,
+            dataset=librispeech_test_clean,
+            device=device,
+        )
+        test_other_nlls = compute_text_nlls(
+            inferencer=llm_inferencer,
+            dataset=librispeech_test_other,
+            device=device,
+        )
+    elif args.model_type == "audio":
+        test_clean_nlls = compute_audio_nlls(
+            inferencer=llm_inferencer,
+            dataset=librispeech_test_clean,
+            device=device,
+        )
+        test_other_nlls = compute_audio_nlls(
+            inferencer=llm_inferencer,
+            dataset=librispeech_test_other,
+            device=device,
+        )
+    elif args.model_type == "cascade":
+        test_clean_nlls = compute_cascade_nlls(
+            inferencer=llm_inferencer,
+            dataset=librispeech_test_clean,
+            device=device,
+        )
+        test_other_nlls = compute_cascade_nlls(
+            inferencer=llm_inferencer,
+            dataset=librispeech_test_other,
+            device=device,
+        )
 
     test_clean_ppl = torch.exp(torch.stack(test_clean_nlls).mean()).item()
     test_other_ppl = torch.exp(torch.stack(test_other_nlls).mean()).item()
@@ -159,6 +233,8 @@ if __name__ == '__main__':
     print("test-other PPL:", round(test_other_ppl, 4))
     print("test-all PPL:", round(test_all_ppl, 4))
     print()
+
+    exit()
 
     # Perform summarization on CNN / DailyMail articles.
     cnn_dailymail = load_from_disk(
@@ -195,6 +271,18 @@ if __name__ == '__main__':
                 text_prompt=text_prompt,
             )
         all_summaries.append(llm_summary)
+
+        print("ARTICLE")
+        print(sample_text)
+        print()
+        print("GT SUMMARY")
+        print(sample_gt_summary)
+        print()
+        print("LLM SUMMARY")
+        print(llm_summary)
+
+        if len(all_summaries) == 5:
+            break
 
     # Save inference outputs for faster evaluation next time.
     save_info = {}

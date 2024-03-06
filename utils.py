@@ -51,8 +51,6 @@ def collate_audio_batch(data):
     # Return text_input_ids and response_input_ids as is without any padding;
     # these will be merged with the full sequence and collated later.
     text_input_ids = [x['text_input_ids'] for x in data]
-
-    # TODO: Crop response_input_ids to maximum length to preserve memory.
     response_input_ids = [x['response_input_ids'] for x in data]
 
     return (
@@ -145,7 +143,8 @@ def batch_full_embed_sequence(
 
         if process_text:
             # Get full text prompt embedding sequence.
-            text_embeds = embed_tokens(text_input_ids.unsqueeze(0).to(device))
+            # HACK: Take elements [1:] to remove start of sentence token.
+            text_embeds = embed_tokens(text_input_ids[1:].unsqueeze(0).to(device))
             full_text_prompt_sequence = merge_prompt_response_tokens(
                 prefix_input_ids=prefix_input_ids,
                 suffix_input_ids=suffix_input_ids,
