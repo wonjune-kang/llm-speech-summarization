@@ -126,12 +126,12 @@ class LLMSpeechTextInference():
             # Generate the LLM response.
             llm_response = self.generate_llm_response(prompt_embeds)[0]
 
-        # HACK: Greedy decoding can cause the LLM to continuously output the
-        # the same thing over and over. These are usually split by the "\n"
-        # character, so we take the first paragraph as the LLM's response to
-        # deal with cases in which this happens.
-        if "\n" in llm_response:
-            llm_response = llm_response.split("\n")[0]
+        # # HACK: Greedy decoding can cause the LLM to continuously output the
+        # # the same thing over and over. These are usually split by the "\n"
+        # # character, so we take the first paragraph as the LLM's response to
+        # # deal with cases in which this happens.
+        # if "\n" in llm_response:
+        #     llm_response = llm_response.split("\n")[0]
 
         return llm_response
 
@@ -183,12 +183,12 @@ class LLMSpeechTextInference():
             )
             llm_response = self.generate_llm_response(prompt_emb_sequence)[0]
 
-        # HACK: Greedy decoding can cause the LLM to continuously output the
-        # the same thing over and over. These are usually split by the "\n"
-        # character, so we take the first paragraph as the LLM's response to
-        # deal with cases in which this happens.
-        if "\n" in llm_response:
-            llm_response = llm_response.split("\n")[0]
+        # # HACK: Greedy decoding can cause the LLM to continuously output the
+        # # the same thing over and over. These are usually split by the "\n"
+        # # character, so we take the first paragraph as the LLM's response to
+        # # deal with cases in which this happens.
+        # if "\n" in llm_response:
+        #     llm_response = llm_response.split("\n")[0]
 
         return llm_response
 
