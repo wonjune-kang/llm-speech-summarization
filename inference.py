@@ -92,7 +92,7 @@ class LLMSpeechTextInference():
 
         return ctc_pool_ranges
 
-    def generate_llm_response(self, inputs_embeds):
+    def generate_llm_response(self, inputs_embeds, max_new_tokens=256):
         with torch.no_grad():
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 # NOTE: Using greedy decoding for generation (no sampling).
@@ -101,7 +101,7 @@ class LLMSpeechTextInference():
                     inputs_embeds=inputs_embeds,
                     # do_sample=True,
                     # temperature=0.7,
-                    max_new_tokens=256,
+                    max_new_tokens=max_new_tokens,
                 )
 
         response_text = self.llm_tokenizer.batch_decode(
@@ -112,7 +112,7 @@ class LLMSpeechTextInference():
 
         return response_text
 
-    def generate_text_response(self, input_text):
+    def generate_text_response(self, input_text, max_new_tokens=256):
         # Create full prompt for instruction-tuned LLM.
         full_text_prompt = f"{PROMPT_PREFIX} {input_text}{PROMPT_SUFFIX} "
 
@@ -124,7 +124,10 @@ class LLMSpeechTextInference():
             prompt_embeds = self.llm.model.embed_tokens(prompt_input_ids)
 
             # Generate the LLM response.
-            llm_response = self.generate_llm_response(prompt_embeds)[0]
+            llm_response = self.generate_llm_response(
+                inputs_embeds=prompt_embeds,
+                max_new_tokens=max_new_tokens,
+            )[0]
 
         # # HACK: Greedy decoding can cause the LLM to continuously output the
         # # the same thing over and over. These are usually split by the "\n"
@@ -135,7 +138,7 @@ class LLMSpeechTextInference():
 
         return llm_response
 
-    def generate_asr_cascade_response(self, audio, additional_text_prompt=""):
+    def generate_asr_cascade_response(self, audio, additional_text_prompt="", max_new_tokens=256):
         with torch.no_grad():
             # Perform ASR using HuBERT.
             audio_tensor = torch.tensor(audio).float().unsqueeze(0).to(self.device)
@@ -145,11 +148,11 @@ class LLMSpeechTextInference():
             # NOTE: Assumes that the text prompt always comes before the
             # transcribed text.
             full_text = additional_text_prompt + asr_transcript
-            llm_response = self.generate_text_response(full_text)
+            llm_response = self.generate_text_response(full_text, max_new_tokens)
 
         return llm_response
 
-    def generate_audio_response(self, audio, additional_text_prompt=""):
+    def generate_audio_response(self, audio, additional_text_prompt="", max_new_tokens=256):
         with torch.no_grad():
             # Get the CTC pooling ranges for the audio.
             audio_tensor = torch.tensor(audio).float().unsqueeze(0).to(self.device)
@@ -181,7 +184,7 @@ class LLMSpeechTextInference():
                 embed_tokens=self.llm.model.embed_tokens,
                 device=self.device,
             )
-            llm_response = self.generate_llm_response(prompt_emb_sequence)[0]
+            llm_response = self.generate_llm_response(prompt_emb_sequence, max_new_tokens)[0]
 
         # # HACK: Greedy decoding can cause the LLM to continuously output the
         # # the same thing over and over. These are usually split by the "\n"
