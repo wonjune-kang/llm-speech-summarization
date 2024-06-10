@@ -40,7 +40,7 @@ If you want to train a model from scratch, you will need to download the [Libris
 
 ### Running training
 
-You can train a model by specifying a config file (```-c```), GPU index (```-g```), and run name (```-n```). Training can also be continued from a checkpoint using the ```-p``` flag. **Note that the code currently only supports training on a single GPU with a batch size of 1.** This is because it was nontrivial to implement batching operations for the various loss computations (different amounts of padding needed for text and speech input lengths in knowledge distillation, different numbers of tokens in the ground-truth LLM responses, etc.).
+You can train a model using ```train.py```, specifying a config file (```-c```), GPU index (```-g```), and run name (```-n```). Training can also be continued from a checkpoint using the ```-p``` flag. **Note that the code currently only supports training on a single GPU with a batch size of 1.** This is because it was nontrivial to implement batching operations for the various loss computations (different amounts of padding needed for text and speech input lengths in knowledge distillation, different numbers of tokens in the ground-truth LLM responses, etc.).
 
 We provide an example training script in ```run_train.sh```.
 
