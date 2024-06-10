@@ -2,7 +2,9 @@
 
 ### Wonjune Kang, Deb Roy
 
-This repository contains code for training and running the audio encoder and LLM pipeline described in our Interspeech 2024 paper, Prompting Large Language Models with Audio for General-Purpose Speech Summarization, implemented in PyTorch. The system effectively acts as a direct speech interface into the [MiniChat-3B LLM](https://huggingface.co/GeneZC/MiniChat-3B), allowing MiniChat to directly take in speech prompts as input instead of having to go through an intermediate automatic speech recognition (ASR) step. While we primarily used the system for speech summarization in the paper, it can be used for any general speech prompt as well.
+This repository contains code for training and running the audio encoder and LLM pipeline described in our Interspeech 2024 paper, Prompting Large Language Models with Audio for General-Purpose Speech Summarization, implemented in PyTorch.
+
+**The system effectively acts as a direct speech interface for an LLM**, allowing the LLM (in this case, [MiniChat-3B](https://huggingface.co/GeneZC/MiniChat-3B)) to directly take in speech prompts as input instead of having to go through an intermediate automatic speech recognition (ASR) step. While our paper focused on using the system for speech summarization, it can be used for any general speech prompt, as well as for interleaved prompts consisting of both speech and text components.
 
 Examples of the model's outputs (summaries and responses to general speech prompts) are available on our [demo page](https://llm-speech-summarization.github.io/).
 
