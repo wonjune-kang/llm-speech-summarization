@@ -31,10 +31,10 @@ train:
   batch_size: 1
   grad_accum_interval: 16
   epochs: 10
-  use_kd_loss: True  ###
+  use_ld_loss: True  ###
   use_fd_loss: True  ###
   ntp_loss_weight: 0.5
-  kd_loss_weight: 0.5
+  ld_loss_weight: 0.5
   fd_loss_weight: 1.0
   fd_loss_connector_layers: [0, 5, 11, 17, 23]  ###
 log:

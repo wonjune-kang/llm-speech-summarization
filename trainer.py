@@ -72,13 +72,13 @@ class Trainer():
             param.requires_grad = False
         print("Loaded LLM.\n")
 
-        # Flags for using knowledge and feature distillation losses.
-        self.use_kd_loss = self.config.train.use_kd_loss
+        # Flags for using logit and feature distillation losses.
+        self.use_ld_loss = self.config.train.use_ld_loss
         self.use_fd_loss = self.config.train.use_fd_loss
 
         # Loss weighting.
         self.ntp_loss_weight = self.config.train.ntp_loss_weight
-        self.kd_loss_weight = self.config.train.kd_loss_weight
+        self.ld_loss_weight = self.config.train.ld_loss_weight
         self.fd_loss_weight = self.config.train.fd_loss_weight
 
         # Connector layer indices for feature distillation loss.
@@ -232,7 +232,7 @@ class Trainer():
                         tokenizer=self.tokenizer,
                         embed_tokens=self.llm.model.embed_tokens,
                         device=self.device,
-                        process_text=(self.use_kd_loss or self.use_fd_loss),
+                        process_text=(self.use_ld_loss or self.use_fd_loss),
                     )
 
                     # Feed inputs_embeds to LLM.
@@ -252,7 +252,7 @@ class Trainer():
                     total_loss += self.ntp_loss_weight * ntp_loss
                     losses["ntp_loss"] = ntp_loss.item()
 
-                    if self.use_kd_loss or self.use_fd_loss:
+                    if self.use_ld_loss or self.use_fd_loss:
                         num_labels = response_input_ids[0].shape[0]
 
                         # Perform forward pass with text inputs for distillation losses.
@@ -264,15 +264,15 @@ class Trainer():
                                 attention_mask=text_attention_mask,
                             )
 
-                        # Knowledge distillation loss on output logits.
-                        if self.use_kd_loss:
+                        # Logit distillation loss.
+                        if self.use_ld_loss:
                             # NOTE: Assumes a batch size of 1.
-                            kd_loss = soft_cross_entropy(
+                            ld_loss = soft_cross_entropy(
                                 input=llm_audio_output.logits[:, -num_labels:, :],
                                 target=llm_text_output.logits[:, -num_labels:, :].detach(),
                             )
-                            total_loss += self.kd_loss_weight * kd_loss
-                            losses["kd_loss"] = kd_loss.item()
+                            total_loss += self.ld_loss_weight * ld_loss
+                            losses["ld_loss"] = ld_loss.item()
 
                         # Feature distillation loss on LLM hidden states.
                         # NOTE: Assumes batch size = 1.
