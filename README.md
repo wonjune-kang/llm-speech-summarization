@@ -6,20 +6,9 @@ This repository contains code for training and running the audio encoder and LLM
 
 Examples of the model's outputs (summaries and responses to general speech prompts) are available on our [demo page](https://llm-speech-summarization.github.io/).
 
-If you find this work or our code useful, please consider citing our paper:
-
-```
-@article{kang2024prompting,
-  title={Prompting Large Language Models with Audio for General-Purpose Speech Summarization},
-  author={Kang, Wonjune and Roy, Deb},
-  journal={arXiv preprint arXiv:2406.xxxxx},
-  year={2024}
-}
-```
-
 ## Prerequisites
 
-You can install all dependencies by running
+You can install dependencies by running
 
 ```
 pip install -r requirements.txt
@@ -27,27 +16,9 @@ pip install -r requirements.txt
 
 ## Pre-trained model weights
 
-You can download the pretrained model checkpoint from the following Google Drive link:
+The pre-trained audio encoder checkpoint can be downloaded from the following Google Drive link:
 
 **[Google Drive Link](https://drive.google.com/drive/folders/1o363nAqpyP80tivFNdjmyyoWGCLUeHZS?usp=sharing)**
-
-## Data preprocessing
-
-If you want to train a model from scratch, you will need to download the [Librispeech corpus](https://huggingface.co/datasets/librispeech_asr) from HuggingFace and preprocess the data.
-
-**TODO**
-
-## Training
-
-You can train a model by specifying a config file (```-c```), GPU index (```-g```), and run name (```-n```). Training can also be continued from a checkpoint using the ```-p``` flag. **Note that the code currently only supports training on a single GPU with a batch size of 1.** This is because it was nontrivial to implement batching operations for the various loss computations (different amounts of padding needed for text and speech input lengths in knowledge distillation, different numbers of tokens in the ground-truth LLM responses, etc.).
-
-```
-RUN_NAME="full_model"
-CONFIG_FILE="config/config_full.yaml"
-GPU_IDX=0
-
-python -u train.py -c $CONFIG_FILE -g $GPU_IDX -n $RUN_NAME
-```
 
 ## Inference
 
@@ -55,7 +26,21 @@ You can perform inference using ```inference.py```. The script enables text resp
 
 1. A regular text prompt, using ```generate_text_response```
 2. A speech prompt, using ```generate_audio_response```
-3. A combination of both, using ```generate_audio_response``` while specifying ```additional_text_prompt```. For example, you could summarize a speech utterance by feeding it into ```audio``` and setting ```additional_text_prompt``` as the prompt for summarization (e.g., "Summarize the following article in 3 sentences or less: ")
+3. A combination of both, using ```generate_audio_response``` while specifying ```additional_text_prompt```. For example, to summarize a speech utterance, you could feed its audio into ```audio``` and set ```additional_text_prompt``` as the prompt for summarization (e.g., "Summarize the following article in 3 sentences or less: ")
+
+## Training a model from scratch
+
+### Data preprocessing
+
+If you want to train a model from scratch, you will need to download the [Librispeech corpus](https://huggingface.co/datasets/librispeech_asr) from HuggingFace and preprocess the data.
+
+**TODO:** This will be added in soon!
+
+### Running training
+
+You can train a model by specifying a config file (```-c```), GPU index (```-g```), and run name (```-n```). Training can also be continued from a checkpoint using the ```-p``` flag. **Note that the code currently only supports training on a single GPU with a batch size of 1.** This is because it was nontrivial to implement batching operations for the various loss computations (different amounts of padding needed for text and speech input lengths in knowledge distillation, different numbers of tokens in the ground-truth LLM responses, etc.).
+
+We provide an example training script in ```run_train.sh```.
 
 ## References
 
