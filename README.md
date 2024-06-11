@@ -30,6 +30,8 @@ You can perform inference using ```inference.py```. The script enables text resp
 2. A speech prompt, using ```generate_audio_response```
 3. A combination of both, using ```generate_audio_response``` while specifying ```additional_text_prompt```. For example, to summarize a speech utterance, you could feed its audio into ```audio``` and set ```additional_text_prompt``` as the prompt for summarization (e.g., "Summarize the following article in 3 sentences or less: ")
 
+When using the pre-trained audio encoder weights from Google Drive, make sure to use ```config/config_full.yaml``` as the config file.
+
 ## Training a model from scratch
 
 ### Data preprocessing
