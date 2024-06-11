@@ -144,12 +144,16 @@ class LLMSpeechTextInference():
 
     def generate_audio_response(self, audio, additional_text_prompt="", max_new_tokens=256):
         with torch.no_grad():
-            # Get the CTC pooling ranges for the audio.
             audio_tensor = torch.tensor(audio).float().unsqueeze(0).to(self.device)
-            ctc_pool_ranges = self.get_ctc_pool_ranges(audio_tensor)
 
-            # Get embeddings from the audio encoder.
-            audio_embeds = self.audio_encoder(audio_tensor, [ctc_pool_ranges])
+            if self.audio_encoder.downsample_method == "ctc_pool":
+                # Get the CTC pooling ranges for the audio.
+                ctc_pool_ranges = self.get_ctc_pool_ranges(audio_tensor)
+
+                # Get embeddings from the audio encoder.
+                audio_embeds = self.audio_encoder(audio_tensor, [ctc_pool_ranges])
+            else:
+                audio_embeds = self.audio_encoder(audio_tensor, ctc_pool_ranges=None)
 
             # Combine the audio embeddings with any additional text prompt.
             # NOTE: Assumes that the text prompt always comes before the audio.
