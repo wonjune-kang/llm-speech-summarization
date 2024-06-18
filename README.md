@@ -8,6 +8,17 @@ This repository contains code for training and running the audio encoder and LLM
 
 Examples of the model's outputs (summaries and responses to general speech prompts) are available on our [demo page](https://llm-speech-summarization.github.io/).
 
+If you find this work or our code useful, please consider citing our paper:
+
+```
+@article{kang2024prompting,
+  title={Prompting Large Language Models with Audio for General-Purpose Speech Summarization},
+  author={Kang, Wonjune and Roy, Deb},
+  journal={arXiv preprint arXiv:2406.05968},
+  year={2024}
+}
+```
+
 ## Prerequisites
 
 You can install dependencies by running
