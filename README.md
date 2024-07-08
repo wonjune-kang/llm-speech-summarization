@@ -43,13 +43,36 @@ You can perform inference using ```inference.py```. The script enables text resp
 
 When using the pre-trained audio encoder weights from Google Drive, make sure to use ```config/config_full.yaml``` as the config file.
 
+For example, after downloading the audio encoder checkpoint, you can run inference using a speech utterance in a file named ```test.wav``` as the prompt by running the following:
+
+```
+python inference.py \
+  -c config/config_full.yaml \
+  -g 0 \
+  -p speech_llm_audio_encoder.pt \
+  -a test.wav
+```
+
 ## Training a model from scratch
 
 ### Data preprocessing
 
-If you want to train a model from scratch, you will need to download the [Librispeech corpus](https://huggingface.co/datasets/librispeech_asr) from HuggingFace and preprocess the data.
+If you want to train a model from scratch, you will need to preprocess the data by running:
 
-**TODO:** This will be added in soon!
+```
+python preprocess_data/preprocess.py
+```
+
+This script will download the full [Librispeech-960h corpus](https://huggingface.co/datasets/librispeech_asr) from HuggingFace. Then, for each dataset split, it will:
+
+1. Use MiniChat to generate responses given the ground truth text transcript as the prompt
+2. Pre-tokenize all of the text components of each sample (the text transcript and LLM response text)
+3. Compute the HuBERT CTC word offsets
+4. Compute the CTC-based pool ranges based on those word offsets
+
+Steps 3 and 4 compute components that are not needed for the full version of the model in the paper, but that are expected in several parts of the data loading/collation and training code expects.
+
+**Note that this may take a while depending on the batch size and hardware you use. The LLM response generation is by far the step that takes the longest time.**
 
 ### Running training
 
