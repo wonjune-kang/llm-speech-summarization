@@ -53,13 +53,8 @@ if __name__ == '__main__':
         'test.other',
     ]
 
-    hf_dataset_save_base_path = "/u/wjkang/data/librispeech_hf"
+    hf_dataset_save_base_path = "/home/gridsan/wjkang/data/librispeech_hf"
     for split in all_splits:
-        print(
-            "SAVING TO", os.path.join(
-                hf_dataset_save_base_path, f"librispeech_{split}_preprocessed.hf"
-            )
-        )
         # Preprocess each Librispeech split.
         librispeech_split = librispeech_all[split]
         print(f"Loaded Librispeech split {split}.\n")
