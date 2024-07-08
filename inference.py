@@ -1,4 +1,7 @@
+import argparse
+import librosa
 import torch
+from omegaconf import OmegaConf
 from transformers import LlamaTokenizer, AutoTokenizer, HubertForCTC
 
 from model.audio_encoder import AudioEncoder
@@ -156,7 +159,9 @@ class LLMSpeechTextInference():
                 audio_embeds = self.audio_encoder(audio_tensor, ctc_pool_ranges=None)
 
             # Combine the audio embeddings with any additional text prompt.
-            # NOTE: Assumes that the text prompt always comes before the audio.
+            # NOTE: Currently assumes that the text prompt always comes before
+            # the audio. You can change how the embeddings are concatenated to
+            # switch up the order or interleave text and audio prompts.
             if len(additional_text_prompt) > 0:
                 # Take elements [1:] to remove start of sentence token.
                 additional_text_input_ids = self.llm_tokenizer(
@@ -181,3 +186,38 @@ class LLMSpeechTextInference():
             llm_response = self.generate_llm_response(prompt_emb_sequence, max_new_tokens)[0]
 
         return llm_response
+
+
+if __name__ == '__main__':
+    """
+    Example use case for running generate_audio_response.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--config', type=str, help="yaml file for configuration")
+    parser.add_argument('-g', '--gpu_idx', type=int, default=0,
+                        help="index of home GPU device")
+    parser.add_argument('-p', '--audio_encoder_checkpoint', type=str,
+                        help="path to audio encoder checkpoint")
+    parser.add_argument('-a', '--audio_file', type=str, required=True,
+                        help="audio file containing speech utterance to be used in prompt")
+    args = parser.parse_args()
+
+    # Select device for running models.
+    device = torch.device(f"cuda:{args.gpu_idx}" if torch.cuda.is_available() else "cpu")
+
+    # Set up inferencer.
+    config = OmegaConf.load(args.config)
+    llm_inferencer = LLMSpeechTextInference(
+        config=config,
+        audio_encoder_checkpoint=args.audio_encoder_checkpoint,
+        device=device,
+    )
+
+    # Load audio file.
+    audio, sr = librosa.load(args.audio_file, sr=16000)
+
+    # Generate LLM response.
+    llm_response = llm_inferencer.generate_audio_response(
+        audio,
+        max_new_tokens=512,
+    )
