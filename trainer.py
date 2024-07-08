@@ -18,14 +18,6 @@ from utils import (
 from writer import MyWriter
 
 
-def load_all_datasets(dataset_paths):
-    all_datasets = []
-    for split in dataset_paths:
-        data_split = load_from_disk(split)
-        all_datasets.append(data_split)
-    return all_datasets
-
-
 class Trainer():
     def __init__(self, args, config, device) -> None:
         self.args = args
