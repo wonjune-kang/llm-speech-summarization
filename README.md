@@ -70,7 +70,7 @@ This script will download the full [Librispeech-960h corpus](https://huggingface
 3. Compute the HuBERT CTC word offsets
 4. Compute the CTC-based pool ranges based on those word offsets
 
-Steps 3 and 4 compute components that are not needed for the full version of the model in the paper, but that are expected in several parts of the data loading/collation and training code expects.
+Steps 3 and 4 compute components that are not needed for the full version of the model in the paper, but that are expected in several parts of the data loading/collation and training code.
 
 **Note that this may take a while depending on the batch size and hardware you use. The LLM response generation is by far the step that takes the longest time.**
 
