@@ -32,7 +32,7 @@ def compute_num_audio_embeds(audio_samples, sr=16000):
 
 
 def collate_audio_batch(data):
-    # data contains 'audio', 'text', 'text_input_ids', 'llama2_response',
+    # data contains 'audio', 'text', 'text_input_ids', 'llm_response',
     # 'response_input_ids', and 'pool_ranges_4'
     # Collates only 'audio' in preparation for feeding into audio encoder.
     # text_input_ids and response_input_ids are left as as here.
@@ -186,6 +186,9 @@ def batch_full_embed_sequence(
 
 
 def soft_cross_entropy(input, target, reduction="mean"):
+    """
+    From https://github.com/GeneZC/MiniMA/blob/0e96386df4938f46853b6456aff785abb437306a/minima/run_distillation_llama_ds.py
+    """
     s_likelihood = F.log_softmax(input, dim=-1)
     t_probability = F.softmax(target, dim=-1)
     cross_entropy = -torch.sum(t_probability * s_likelihood, dim=-1)
