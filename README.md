@@ -11,11 +11,13 @@ Examples of the model's outputs (summaries and responses to general speech promp
 If you find this work or our code useful, please consider citing our paper:
 
 ```
-@article{kang2024prompting,
-  title={Prompting Large Language Models with Audio for General-Purpose Speech Summarization},
-  author={Kang, Wonjune and Roy, Deb},
-  journal={arXiv preprint arXiv:2406.05968},
-  year={2024}
+@inproceedings{kang24d_interspeech,
+  title     = {Prompting Large Language Models with Audio for General-Purpose Speech Summarization},
+  author    = {Wonjune Kang and Deb Roy},
+  year      = {2024},
+  booktitle = {Interspeech 2024},
+  pages     = {1955--1959},
+  doi       = {10.21437/Interspeech.2024-2213},
 }
 ```
 
