@@ -12,4 +12,4 @@ tensorboard==2.16.2
 tokenizers==0.13.3
 torch==2.2.0
 torchaudio==2.0.1+cu117
-transformers==4.32.1
+transformers==4.38.0
