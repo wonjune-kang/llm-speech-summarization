@@ -10,6 +10,6 @@ sentencepiece==0.1.97
 soundfile==0.12.1
 tensorboard==2.16.2
 tokenizers==0.13.3
-torch==2.0.0+cu117
+torch==2.2.0
 torchaudio==2.0.1+cu117
 transformers==4.32.1
