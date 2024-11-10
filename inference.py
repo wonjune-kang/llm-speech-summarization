@@ -17,7 +17,7 @@ class LLMSpeechTextInference():
         # Audio encoder.
         checkpoint = torch.load(audio_encoder_checkpoint, map_location="cpu")
         self.audio_encoder = AudioEncoder(self.config)
-        self.audio_encoder.load_state_dict(checkpoint["audio_encoder"])
+        self.audio_encoder.load_state_dict(checkpoint)
         self.audio_encoder.eval().to(self.device)
         print("Loaded audio encoder.\n")
 
@@ -217,7 +217,14 @@ if __name__ == '__main__':
     audio, sr = librosa.load(args.audio_file, sr=16000)
 
     # Generate LLM response.
+    # NOTE: Generating the response in this way sometimes leads to the LLM repeating a
+    # chunk of text over and over. You can manually get around this by cropping the
+    # generated output.
     llm_response = llm_inferencer.generate_audio_response(
         audio,
         max_new_tokens=512,
     )
+
+    print("LLM Response:\n")
+    print(llm_response)
+
