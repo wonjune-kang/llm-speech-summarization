@@ -266,7 +266,7 @@ class Trainer():
                     # Compute audio embeddings using audio encoder.
                     padded_audio_embeds = self.audio_encoder(padded_inputs, ctc_pool_ranges)
 
-                    if self.config.train.batch_size > 1:
+                    if self.config.train.batch_size > 1 or self.encoder_base == "whisper":
                         # Unpad the audio embeddings in preparation for creating
                         # the full embedding sequence to feed into the LLM.
                         unpadded_audio_embeds = []
