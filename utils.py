@@ -23,44 +23,12 @@ def compute_num_audio_embeds(audio_samples, sr=16000):
     encoder. Note that the actual number may be off by one (less than the actual
     number). We assume that this will not affect the performance of the model.
     """
-    # Pre-trained HuBERT produces embeddings every 20ms.
+    # Pre-trained HuBERT/Whisper produces embeddings every 20ms.
     num_embeds = (audio_samples - (sr * 0.01)) // (sr * 0.02)
 
     # Audio encoder further mean pools embeddings and downsamples by a factor of 4.
     num_pooled_embeds = int(num_embeds // 4 - 1)
     return num_pooled_embeds
-
-
-def collate_audio_batch(data):
-    # data contains 'audio', 'text', 'text_input_ids', 'llm_response',
-    # 'response_input_ids', and 'pool_ranges_4'
-    # Collates only 'audio' in preparation for feeding into audio encoder.
-    # text_input_ids and response_input_ids are left as as here.
-    raw_audios = [x['audio']['array'] for x in data]
-    audio_len_samples = [len(audio) for audio in raw_audios]
-    max_len = max(audio_len_samples)
-    prompt_texts = [x['text'] for x in data]
-    ctc_pool_ranges = [x['pool_ranges_4'] for x in data]
-
-    # Zero-pad audio on the right to match the longest audio clip in the batch.
-    padded_audios = torch.stack(
-        [F.pad(audio, (0, max_len - len(audio)), mode="constant") for audio in raw_audios],
-        dim=0,
-    ).float()
-
-    # Return text_input_ids and response_input_ids as is without any padding;
-    # these will be merged with the full sequence and collated later.
-    text_input_ids = [x['text_input_ids'] for x in data]
-    response_input_ids = [x['response_input_ids'] for x in data]
-
-    return (
-        padded_audios,
-        audio_len_samples,
-        prompt_texts,
-        text_input_ids,
-        response_input_ids,
-        ctc_pool_ranges,
-    )
 
 
 def merge_prompt_response_tokens(

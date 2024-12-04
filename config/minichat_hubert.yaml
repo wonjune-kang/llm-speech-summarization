@@ -1,0 +1,47 @@
+seed_everything: 1234
+data:
+  base_path: /home/gridsan/wjkang/data/librispeech_hf
+  train_set: [
+    librispeech_train.clean.100_preprocessed.hf,
+    librispeech_train.clean.360_preprocessed.hf,
+    librispeech_train.other.500_preprocessed.hf,
+  ]
+  val_set: [
+    librispeech_validation.clean_preprocessed.hf,
+    librispeech_validation.other_preprocessed.hf,
+  ]
+model:
+  audio_encoder:
+    base: hubert
+    type: facebook/hubert-large-ls960-ft
+    downsample_method: pool  ###
+    downsample_factor: 4
+    pooling:
+      kernel_size: 8
+      stride: 4
+  llm_type: "GeneZC/MiniChat-2-3B"
+  llm_embedding_channels: 3072  # LLM input embedding size
+audio:
+  sampling_rate: 16000
+train:
+  num_gpus: 1
+  num_workers: 4
+  optimizer:
+    lr: 5e-5
+    beta1: 0.9
+    beta2: 0.999
+  batch_size: 1
+  grad_accum_interval: 16
+  epochs: 10
+  use_ld_loss: True  ###
+  use_fd_loss: True  ###
+  ntp_loss_weight: 0.5
+  ld_loss_weight: 0.5
+  fd_loss_weight: 1.0
+  fd_loss_connector_layers: [0, 5, 11, 17, 23]  ###
+log:
+  checkpoint_dir: checkpoints
+  log_dir: logs
+  log_interval: 10
+  validation_interval: 30000
+  num_generate_samples: 5

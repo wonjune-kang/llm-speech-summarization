@@ -10,7 +10,6 @@ from model.audio_encoder import AudioEncoder
 from model.audio_llama import AudioLlamaForCausalLM
 from utils import (
     batch_full_embed_sequence,
-    collate_audio_batch,
     compute_num_audio_embeds,
     merge_prompt_tokens,
     soft_cross_entropy,
@@ -38,12 +37,9 @@ class Trainer():
 
         self.writer = MyWriter(self.config, self.log_dir)
 
-        # Set up train and validation dataloaders.
-        self.get_dataloaders()
-        print("Set up dataloaders.\n")
-
         # Audio encoder.
-        self.audio_encoder = AudioEncoder(self.config)
+        self.encoder_base = self.config.model.audio_encoder.base
+        self.audio_encoder = AudioEncoder(self.config, self.device)
         print("Loaded audio encoder.\n")
 
         # LLM tokenizer.
@@ -63,6 +59,10 @@ class Trainer():
         for param in self.llm.parameters():
             param.requires_grad = False
         print("Loaded LLM.\n")
+
+        # Set up train and validation dataloaders.
+        self.get_dataloaders()
+        print("Set up dataloaders.\n")
 
         # Flags for using logit and feature distillation losses.
         self.use_ld_loss = self.config.train.use_ld_loss
@@ -127,6 +127,67 @@ class Trainer():
 
         print(f"Loaded checkpoint from {checkpoint_path}.\n")
 
+    def collate_audio_batch_hubert(self, data):
+        # data contains 'audio', 'text', 'text_input_ids', 'llm_response',
+        # 'response_input_ids', and 'pool_ranges_4'
+        # Collates only 'audio' in preparation for feeding into audio encoder.
+        # text_input_ids and response_input_ids are left as as here.
+        raw_audios = [x['audio']['array'] for x in data]
+        audio_len_samples = [len(audio) for audio in raw_audios]
+        max_len = max(audio_len_samples)
+        prompt_texts = [x['text'] for x in data]
+        ctc_pool_ranges = [x['pool_ranges_4'] for x in data]
+
+        # Zero-pad audio on the right to match the longest audio clip in the batch.
+        padded_audios = torch.stack(
+            [F.pad(audio, (0, max_len - len(audio)), mode="constant") for audio in raw_audios],
+            dim=0,
+        ).float()
+
+        # Return text_input_ids and response_input_ids as is without any padding;
+        # these will be merged with the full sequence and collated later.
+        text_input_ids = [x['text_input_ids'] for x in data]
+        response_input_ids = [x['response_input_ids'] for x in data]
+
+        return (
+            padded_audios,
+            audio_len_samples,
+            prompt_texts,
+            text_input_ids,
+            response_input_ids,
+            ctc_pool_ranges,
+        )
+
+    def collate_audio_batch_whisper(self, data):
+        # data contains 'audio', 'text', 'text_input_ids', 'llm_response',
+        # 'response_input_ids', and 'pool_ranges_4'
+        # Collates only 'audio' in preparation for feeding into audio encoder.
+        # text_input_ids and response_input_ids are left as as here.
+        raw_audios = [x['audio']['array'].numpy() for x in data]
+        audio_len_samples = [len(audio) for audio in raw_audios]
+        prompt_texts = [x['text'] for x in data]
+        ctc_pool_ranges = [x['pool_ranges_4'] for x in data]
+
+        padded_input_features = self.audio_encoder.feature_extractor(
+            raw_audios,
+            return_tensors="pt",
+            sampling_rate=self.config.audio.sampling_rate,
+        ).input_features
+
+        # Return text_input_ids and response_input_ids as is without any padding;
+        # these will be merged with the full sequence and collated later.
+        text_input_ids = [x['text_input_ids'] for x in data]
+        response_input_ids = [x['response_input_ids'] for x in data]
+
+        return (
+            padded_input_features,
+            audio_len_samples,
+            prompt_texts,
+            text_input_ids,
+            response_input_ids,
+            ctc_pool_ranges,
+        )
+
     def get_dataloaders(self):
         # Load train datasets and combine into one Dataset object.
         all_train_datasets = []
@@ -157,7 +218,11 @@ class Trainer():
             shuffle=True,
             num_workers=self.config.train.num_workers,
             pin_memory=True,
-            collate_fn=collate_audio_batch,
+            collate_fn=(
+                self.collate_audio_batch_hubert
+                if self.encoder_base == "hubert"
+                else self.collate_audio_batch_whisper
+            ),
         )
         self.val_dataloader = torch.utils.data.DataLoader(
             dataset=self.val_dataset,
@@ -165,7 +230,11 @@ class Trainer():
             shuffle=False,
             num_workers=self.config.train.num_workers,
             pin_memory=True,
-            collate_fn=collate_audio_batch,
+            collate_fn=(
+                self.collate_audio_batch_hubert
+                if self.encoder_base == "hubert"
+                else self.collate_audio_batch_whisper
+            ),
         )
 
     def train(self):
@@ -180,7 +249,7 @@ class Trainer():
             self.optimizer.zero_grad()
 
             for batch_idx, (
-                padded_audios,
+                padded_inputs,
                 audio_len_samples,
                 _,
                 text_input_ids,
@@ -188,10 +257,14 @@ class Trainer():
                 ctc_pool_ranges,
             ) in enumerate(tqdm(self.train_dataloader)):
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
-                    padded_audios = padded_audios.to(self.device)
+                    padded_inputs = padded_inputs.to(self.device)
+                    text_input_ids = [input_ids.to(self.device) for input_ids in text_input_ids]
+                    response_input_ids = [
+                        input_ids.to(self.device) for input_ids in response_input_ids
+                    ]
 
                     # Compute audio embeddings using audio encoder.
-                    padded_audio_embeds = self.audio_encoder(padded_audios, ctc_pool_ranges)
+                    padded_audio_embeds = self.audio_encoder(padded_inputs, ctc_pool_ranges)
 
                     if self.config.train.batch_size > 1:
                         # Unpad the audio embeddings in preparation for creating
@@ -228,6 +301,7 @@ class Trainer():
                     )
 
                     # Feed inputs_embeds to LLM.
+                    audio_attention_mask = audio_attention_mask.to(self.device)
                     llm_audio_output = self.llm(
                         inputs_embeds=batched_audio_prompt_sequences,
                         labels=response_input_ids,
@@ -249,6 +323,7 @@ class Trainer():
 
                         # Perform forward pass with text inputs for distillation losses.
                         with torch.no_grad():
+                            text_attention_mask = text_attention_mask.to(self.device)
                             llm_text_output = self.llm(
                                 inputs_embeds=batched_text_prompt_sequences,
                                 labels=response_input_ids,
