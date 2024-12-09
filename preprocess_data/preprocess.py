@@ -64,7 +64,13 @@ if __name__ == '__main__':
         # all_responses = []
         # for sample in tqdm(librispeech_split):
         #     transcript = sample["text"].lower()
-        #     response = run_llm_prompt_inference(transcript, llm, llm_tokenizer, device)
+        #     response = run_llm_prompt_inference(
+        #         user_prompt=transcript,
+        #         model="minichat",
+        #         llm=llm,
+        #         tokenizer=llm_tokenizer,
+        #         device=device,
+        #     )
         #     all_responses.append(response)
 
         # Use batched inference to generate responses more quickly.
@@ -81,7 +87,13 @@ if __name__ == '__main__':
             transcripts = [
                 transcript.lower() for transcript in librispeech_split[i:i+batch_size]['text']
             ]
-            responses = run_llm_prompt_inference_batched(transcripts, llm, llm_tokenizer, device)
+            responses = run_llm_prompt_inference_batched(
+                user_prompts=transcripts,
+                model="minichat",
+                llm=llm,
+                tokenizer=llm_tokenizer,
+                device=device,
+            )
             all_responses.extend(responses)
 
         assert len(all_responses) == len(librispeech_split), (

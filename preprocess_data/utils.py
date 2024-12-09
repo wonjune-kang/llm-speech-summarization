@@ -3,27 +3,47 @@ import torch
 from tqdm import tqdm
 
 
+SYSTEM_PROMPT = ""
+MINICHAT_PROMPT_PREFIX = f"{SYSTEM_PROMPT}[|User|]"
+MINICHAT_PROMPT_SUFFIX = "</s>[|Assistant|]"
+LLAMA_PROMPT_PREFIX = f"<|start_header_id|>system<|end_header_id|>{SYSTEM_PROMPT}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n"
+LLAMA_PROMPT_SUFFIX = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+
+
 def seed_everything(seed=1234):
     random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
 
-def create_batch_prompts(user_prompts):
-    system_prompt = ""
+def create_batch_prompts_minichat(user_prompts):
     full_prompts = [
-        f"{system_prompt}[|User|] {user_prompt.lower()}</s>[|Assistant|]"
+        f"{MINICHAT_PROMPT_PREFIX} {user_prompt.lower()}{MINICHAT_PROMPT_SUFFIX}"
         for user_prompt in user_prompts
     ]
     return full_prompts
 
 
-def run_llm_prompt_inference(user_prompt, llm, tokenizer, device):
-    system_prompt = ""
-    full_prompt = f"{system_prompt}[|User|] {user_prompt.lower()}</s>[|Assistant|]"
+def create_batch_prompts_llama3(user_prompts):
+    full_prompts = [
+        f"{LLAMA_PROMPT_PREFIX}{user_prompt}{LLAMA_PROMPT_SUFFIX}"
+        for user_prompt in user_prompts
+    ]
+    return full_prompts
+
+
+def run_llm_prompt_inference(user_prompt, model, llm, tokenizer, device):
+    if model == "minichat":
+        system_prompt = ""
+        full_prompt = f"{system_prompt}[|User|] {user_prompt.lower()}</s>[|Assistant|]"
+    elif model == "llama3":
+        full_prompt = f"{LLAMA_PROMPT_PREFIX}{user_prompt.lower()}{LLAMA_PROMPT_SUFFIX}"
+    else:
+        raise Exception("Unexpected model type.")
 
     inputs = tokenizer(full_prompt, return_tensors="pt").to(device)
     full_prompt_embeds = llm.model.embed_tokens(inputs.input_ids)
+    attention_mask = inputs.attention_mask
     len_inputs = inputs.input_ids.shape[1]
 
     with torch.no_grad():
@@ -32,6 +52,7 @@ def run_llm_prompt_inference(user_prompt, llm, tokenizer, device):
         generate_ids = llm.generate(
             input_ids=None,
             inputs_embeds=full_prompt_embeds,
+            attention_mask=attention_mask,
             max_new_tokens=2*len_inputs,
         )
 
@@ -44,9 +65,15 @@ def run_llm_prompt_inference(user_prompt, llm, tokenizer, device):
     return outputs
 
 
-def run_llm_prompt_inference_batched(user_prompts, llm, tokenizer, device):
+def run_llm_prompt_inference_batched(user_prompts, model, llm, tokenizer, device):
     with torch.no_grad():
-        full_prompts = create_batch_prompts(user_prompts)
+        if model == "minichat":
+            full_prompts = create_batch_prompts_minichat(user_prompts)
+        elif model == "llama3":
+            full_prompts = create_batch_prompts_llama3(user_prompts)
+        else:
+            raise Exception("Unexpected model type.")
+
         inputs = tokenizer(
             full_prompts,
             return_tensors="pt",
@@ -54,6 +81,7 @@ def run_llm_prompt_inference_batched(user_prompts, llm, tokenizer, device):
         ).to(device)
 
         full_prompt_embeds = llm.model.embed_tokens(inputs.input_ids)
+        attention_mask = inputs.attention_mask
         max_input_length = full_prompt_embeds.shape[1]
 
         # Generate
@@ -61,7 +89,7 @@ def run_llm_prompt_inference_batched(user_prompts, llm, tokenizer, device):
         generate_ids = llm.generate(
             input_ids=None,
             inputs_embeds=full_prompt_embeds,
-            attention_mask=inputs.attention_mask,
+            attention_mask=attention_mask,
             max_new_tokens=2*max_input_length,
         )
 
