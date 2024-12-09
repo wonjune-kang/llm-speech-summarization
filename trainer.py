@@ -146,8 +146,10 @@ class Trainer():
 
         # Return text_input_ids and response_input_ids as is without any padding;
         # these will be merged with the full sequence and collated later.
-        text_input_ids = [x['text_input_ids'] for x in data]
-        response_input_ids = [x['response_input_ids'] for x in data]
+        # HACK: Take elements [1:] from input_ids to remove start of sequence
+        # token that was included during data preprocessing.
+        text_input_ids = [x['text_input_ids'][1:] for x in data]
+        response_input_ids = [x['response_input_ids'][1:] for x in data]
 
         return (
             padded_audios,
@@ -176,8 +178,10 @@ class Trainer():
 
         # Return text_input_ids and response_input_ids as is without any padding;
         # these will be merged with the full sequence and collated later.
-        text_input_ids = [x['text_input_ids'] for x in data]
-        response_input_ids = [x['response_input_ids'] for x in data]
+        # HACK: Take elements [1:] from input_ids to remove start of sequence
+        # token that was included during data preprocessing.
+        text_input_ids = [x['text_input_ids'][1:] for x in data]
+        response_input_ids = [x['response_input_ids'][1:] for x in data]
 
         return (
             padded_input_features,

@@ -111,8 +111,7 @@ def batch_full_embed_sequence(
 
         if process_text:
             # Get full text prompt embedding sequence.
-            # HACK: Take elements [1:] to remove start of sentence token.
-            text_embeds = embed_tokens(text_input_ids[1:].unsqueeze(0).to(device))
+            text_embeds = embed_tokens(text_input_ids.unsqueeze(0).to(device))
             full_text_prompt_sequence = merge_prompt_response_tokens(
                 prefix_input_ids=prefix_input_ids,
                 suffix_input_ids=suffix_input_ids,
