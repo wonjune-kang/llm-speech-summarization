@@ -61,7 +61,9 @@ class AudioLlamaForCausalLM(LlamaForCausalLM):
         )
 
         hidden_states = outputs[0]
-        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
+
+        # Only compute necessary logits, and do not upcast them to float if we
+        # are not computing the loss.
         logits = self.lm_head(hidden_states[:, -num_logits_to_keep:, :])
 
         loss = None
