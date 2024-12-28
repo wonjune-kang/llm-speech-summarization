@@ -9,7 +9,7 @@ def load_hubert_encoder(config):
 
 def load_whisper_encoder(config):
     encoder = AutoModel.from_pretrained(config.model.audio_encoder.type).encoder
-    feature_extractor = AutoFeatureExtractor.from_pretrained("openai/whisper-medium")
+    feature_extractor = AutoFeatureExtractor.from_pretrained(config.model.audio_encoder.type)
     return encoder, feature_extractor
 
 

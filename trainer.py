@@ -153,7 +153,7 @@ class Trainer():
         # HACK: Take elements [1:] from input_ids to remove start of sequence
         # token that was included during data preprocessing.
         text_input_ids = [x['text_input_ids'][1:] for x in data]
-        response_input_ids = [x['response_input_ids'][1:] for x in data]
+        response_input_ids = [x['response_input_ids'][0][1:] for x in data]  # HACK/TODO: Remove [0]
 
         return (
             raw_audios,
@@ -186,7 +186,7 @@ class Trainer():
         # HACK: Take elements [1:] from input_ids to remove start of sequence
         # token that was included during data preprocessing.
         text_input_ids = [x['text_input_ids'][1:] for x in data]
-        response_input_ids = [x['response_input_ids'][1:] for x in data]
+        response_input_ids = [x['response_input_ids'][0][1:] for x in data]  # HACK/TODO: Remove [0]
 
         return (
             raw_audios,
@@ -217,9 +217,9 @@ class Trainer():
             all_val_datasets.append(dataset)
         self.val_dataset = concatenate_datasets(all_val_datasets)
 
-        # NOTE: For debugging only. Comment out below if not debugging.
-        self.train_dataset = self.train_dataset.select(range(50))
-        self.val_dataset = self.val_dataset.select(range(50))
+        # # NOTE: For debugging only. Comment out below if not debugging.
+        # self.train_dataset = self.train_dataset.select(range(50))
+        # self.val_dataset = self.val_dataset.select(range(50))
 
         # Create dataloaders.
         self.train_dataloader = torch.utils.data.DataLoader(
