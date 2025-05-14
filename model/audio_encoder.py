@@ -1,15 +1,32 @@
 import torch
 import torch.nn as nn
-from transformers import AutoModel
+from transformers import AutoFeatureExtractor, AutoModel
+
+
+def load_hubert_encoder(config):
+    return AutoModel.from_pretrained(config.model.audio_encoder.type)
+
+
+def load_whisper_encoder(config):
+    encoder = AutoModel.from_pretrained(config.model.audio_encoder.type).encoder
+    feature_extractor = AutoFeatureExtractor.from_pretrained(config.model.audio_encoder.type)
+    return encoder, feature_extractor
 
 
 class AudioEncoder(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, device):
         super(AudioEncoder, self).__init__()
         self.config = config
+        self.device = device
 
-        # Load pre-trained HuBERT model.
-        self.encoder = AutoModel.from_pretrained(self.config.model.audio_encoder.type)
+        if self.config.model.audio_encoder.base == "hubert":
+            self.encoder_base = "hubert"
+            self.encoder = load_hubert_encoder(self.config)
+        elif self.config.model.audio_encoder.base == "whisper":
+            self.encoder_base = "whisper"
+            self.encoder, self.feature_extractor = load_whisper_encoder(self.config)
+        else:
+            raise Exception("Unexpected encoder type in config.")
 
         self.downsample_method = self.config.model.audio_encoder.downsample_method
         self.downsample_factor = self.config.model.audio_encoder.downsample_factor
@@ -36,8 +53,8 @@ class AudioEncoder(nn.Module):
         else:
             raise Exception("Invalid downsampling method for audio encoder.")
 
-    def forward(self, audio_input, ctc_pool_ranges=None):
-        encoder_out = self.encoder(audio_input).last_hidden_state  # (B, N, 1024)
+    def forward(self, input, ctc_pool_ranges=None):
+        encoder_out = self.encoder(input).last_hidden_state  # (B, N, 1024)
 
         if self.downsample_method == "pool":
             # (B, N, 1024) -> (B, N/4, 1024) -> (B, N/4, 3072)

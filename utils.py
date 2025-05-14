@@ -4,17 +4,10 @@ import torch.nn.functional as F
 
 
 SYSTEM_PROMPT = ""
-PROMPT_PREFIX = f"{SYSTEM_PROMPT}[|User|]"
-PROMPT_SUFFIX = "</s>[|Assistant|]"
-
-
-def create_batch_prompts(user_prompts):
-    system_prompt = ""
-    full_prompts = [
-        f"{system_prompt}[|User|] {user_prompt.lower()}</s>[|Assistant|]"
-        for user_prompt in user_prompts
-    ]
-    return full_prompts
+MINICHAT_PROMPT_PREFIX = f"{SYSTEM_PROMPT}[|User|]"
+MINICHAT_PROMPT_SUFFIX = "</s>[|Assistant|]"
+LLAMA_PROMPT_PREFIX = f"<|start_header_id|>system<|end_header_id|>{SYSTEM_PROMPT}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n"
+LLAMA_PROMPT_SUFFIX = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
 
 
 def compute_num_audio_embeds(audio_samples, sr=16000):
@@ -23,44 +16,12 @@ def compute_num_audio_embeds(audio_samples, sr=16000):
     encoder. Note that the actual number may be off by one (less than the actual
     number). We assume that this will not affect the performance of the model.
     """
-    # Pre-trained HuBERT produces embeddings every 20ms.
+    # Pre-trained HuBERT/Whisper produces embeddings every 20ms.
     num_embeds = (audio_samples - (sr * 0.01)) // (sr * 0.02)
 
     # Audio encoder further mean pools embeddings and downsamples by a factor of 4.
     num_pooled_embeds = int(num_embeds // 4 - 1)
     return num_pooled_embeds
-
-
-def collate_audio_batch(data):
-    # data contains 'audio', 'text', 'text_input_ids', 'llm_response',
-    # 'response_input_ids', and 'pool_ranges_4'
-    # Collates only 'audio' in preparation for feeding into audio encoder.
-    # text_input_ids and response_input_ids are left as as here.
-    raw_audios = [x['audio']['array'] for x in data]
-    audio_len_samples = [len(audio) for audio in raw_audios]
-    max_len = max(audio_len_samples)
-    prompt_texts = [x['text'] for x in data]
-    ctc_pool_ranges = [x['pool_ranges_4'] for x in data]
-
-    # Zero-pad audio on the right to match the longest audio clip in the batch.
-    padded_audios = torch.stack(
-        [F.pad(audio, (0, max_len - len(audio)), mode="constant") for audio in raw_audios],
-        dim=0,
-    ).float()
-
-    # Return text_input_ids and response_input_ids as is without any padding;
-    # these will be merged with the full sequence and collated later.
-    text_input_ids = [x['text_input_ids'] for x in data]
-    response_input_ids = [x['response_input_ids'] for x in data]
-
-    return (
-        padded_audios,
-        audio_len_samples,
-        prompt_texts,
-        text_input_ids,
-        response_input_ids,
-        ctc_pool_ranges,
-    )
 
 
 def merge_prompt_response_tokens(
@@ -78,14 +39,23 @@ def merge_prompt_response_tokens(
         [
             prefix_embeds,
             inputs_embeds,
-            suffix_embeds[:, 1:, :],
-            response_embeds[:, 1:, :],
+            suffix_embeds[:, 1:, :],  # Take [1:] to remove start token.
+            response_embeds[:, 1:, :],  # Take [1:] to remove start token.
         ], dim=1
     )
     return full_embed_sequence
 
 
-def merge_prompt_tokens(inputs_embeds, tokenizer, embed_tokens, device):
+def merge_prompt_tokens(inputs_embeds, tokenizer, embed_tokens, llm_type, device):
+    if llm_type == "GeneZC/MiniChat-2-3B":
+        PROMPT_PREFIX = MINICHAT_PROMPT_PREFIX
+        PROMPT_SUFFIX = MINICHAT_PROMPT_SUFFIX
+    elif llm_type == "meta-llama/Llama-3.2-3B-Instruct":
+        PROMPT_PREFIX = LLAMA_PROMPT_PREFIX
+        PROMPT_SUFFIX = LLAMA_PROMPT_SUFFIX
+    else:
+        raise Exception("Unknown LLM type.")
+
     # Concatenate the prompt prefix, prompt embeddings, and prompt suffix
     # in preparation for generation (LLM generates the response).
     prefix_input_ids = tokenizer(PROMPT_PREFIX, return_tensors="pt").input_ids.to(device)
@@ -97,7 +67,7 @@ def merge_prompt_tokens(inputs_embeds, tokenizer, embed_tokens, device):
         [
             prefix_embeds,
             inputs_embeds,
-            suffix_embeds[:, 1:, :],
+            suffix_embeds[:, 1:, :],  # Take [1:] to remove start token.
         ], dim=1
     )
     return prompt_embed_sequence
@@ -118,9 +88,19 @@ def batch_full_embed_sequence(
     all_response_input_ids,
     tokenizer,
     embed_tokens,
+    llm_type,
     device,
     process_text=False,
 ):
+    if llm_type == "GeneZC/MiniChat-2-3B":
+        PROMPT_PREFIX = MINICHAT_PROMPT_PREFIX
+        PROMPT_SUFFIX = MINICHAT_PROMPT_SUFFIX
+    elif llm_type == "meta-llama/Llama-3.2-3B-Instruct":
+        PROMPT_PREFIX = LLAMA_PROMPT_PREFIX
+        PROMPT_SUFFIX = LLAMA_PROMPT_SUFFIX
+    else:
+        raise Exception("Unknown LLM type.")
+
     # Get token IDs for instruction-tuned LLM's prompt prefix and suffix.
     prefix_input_ids = tokenizer(PROMPT_PREFIX, return_tensors="pt").input_ids.to(device)
     suffix_input_ids = tokenizer(PROMPT_SUFFIX, return_tensors="pt").input_ids.to(device)
@@ -143,8 +123,7 @@ def batch_full_embed_sequence(
 
         if process_text:
             # Get full text prompt embedding sequence.
-            # HACK: Take elements [1:] to remove start of sentence token.
-            text_embeds = embed_tokens(text_input_ids[1:].unsqueeze(0).to(device))
+            text_embeds = embed_tokens(text_input_ids.unsqueeze(0).to(device))
             full_text_prompt_sequence = merge_prompt_response_tokens(
                 prefix_input_ids=prefix_input_ids,
                 suffix_input_ids=suffix_input_ids,
