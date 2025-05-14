@@ -42,8 +42,8 @@ if __name__ == '__main__':
 
     all_splits = [
         'train.clean.100',
-        # 'train.clean.360',
-        # 'train.other.500',
+        'train.clean.360',
+        'train.other.500',
         'validation.clean',
         'validation.other',
         'test.clean',
