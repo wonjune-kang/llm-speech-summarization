@@ -21,6 +21,13 @@ If you find this work or our code useful, please consider citing our paper:
 }
 ```
 
+### Update: 5/14/2025
+We have added the option of using [Llama 3.2 3B Instruct](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct) as the base text LLM instead of MiniChat-3B, as well as using the encoder from Whisper-medium as the audio encoder. However, preliminary experiments show that, as implemented currently, Whisper does not do very well. The recommended model configuration to use is Llama 3.2 3B + HuBERT, which you can train using ```config/llama3_hubert.yaml``` as the config file.
+
+Please note that you will need to obtain access to the Llama 3 family of models through HuggingFace separately if you would like to use it.
+
+**Unfortunately, we do not anticipate adding to this project significantly in the foreseeable future. Therefore, we will not be able to add certain desirable features like multi-GPU training support. We appreciate your understanding.**
+
 ## Prerequisites
 
 You can install dependencies by running
@@ -29,29 +36,31 @@ You can install dependencies by running
 pip install -r requirements.txt
 ```
 
+**Note:** Because of how often HuggingFace updates the Llama code in ```transformers```, training and inference can be sensitive to the specific version of the package that you are using. Please make sure to use the exact dependencies specified in the requirements file!
+
 ## Pre-trained model weights
 
-The pre-trained audio encoder checkpoint can be downloaded from the following Google Drive link:
+The pre-trained audio encoder checkpoint (HuBERT for either MiniChat or Llama 3.2) can be downloaded from Google Drive:
 
 **[Google Drive Link](https://drive.google.com/drive/folders/1o363nAqpyP80tivFNdjmyyoWGCLUeHZS?usp=sharing)**
 
 ## Inference
 
-You can perform inference using ```inference.py```. The script enables text response generation using MiniChat given:
+You can perform inference using ```inference.py```. The script enables text response generation using the selected LLM given:
 
 1. A regular text prompt, using ```generate_text_response```
 2. A speech prompt, using ```generate_audio_response```
 3. A combination of both, using ```generate_audio_response``` while specifying ```additional_text_prompt```. For example, to summarize a speech utterance, you could feed its audio into ```audio``` and set ```additional_text_prompt``` as the prompt for summarization (e.g., "Summarize the following article in 3 sentences or less: ")
 
-When using the pre-trained audio encoder weights from Google Drive, make sure to use ```config/config_full.yaml``` as the config file.
+When using the pre-trained audio encoder weights from Google Drive, make sure to use either ```config/minichat_hubert.yaml``` or ```config/llama3_hubert.yaml``` as the config file.
 
 For example, after downloading the audio encoder checkpoint, you can run inference using a speech utterance in a file named ```test.wav``` as the prompt by running the following:
 
 ```
 python inference.py \
-  -c config/config_full.yaml \
+  -c config/llama3_hubert.yaml \
   -g 0 \
-  -p speech_llm_audio_encoder.pt \
+  -p llama3_hubert_audio_encoder.pt \
   -a test.wav
 ```
 
@@ -59,20 +68,16 @@ python inference.py \
 
 ### Data preprocessing
 
-If you want to train a model from scratch, you will need to preprocess the data by running:
-
-```
-python preprocess_data/preprocess.py
-```
+If you want to train a model from scratch, you will need to preprocess the data by running either ```python preprocess_data/preprocess.py``` or ```python preprocess_data/preprocess_llama3.py```, depending on which LLM you want to use.
 
 This script will download the full [Librispeech-960h corpus](https://huggingface.co/datasets/librispeech_asr) from HuggingFace. Then, for each dataset split, it will:
 
-1. Use MiniChat to generate responses given the ground truth text transcript as the prompt
+1. Use the LLM to generate responses given the ground truth text transcript as the prompt
 2. Pre-tokenize all of the text components of each sample (the text transcript and LLM response text)
 3. Compute the HuBERT CTC word offsets
 4. Compute the CTC-based pool ranges based on those word offsets
 
-Steps 3 and 4 compute components that are not needed for the full version of the model in the paper, but that are expected in several parts of the data loading/collation and training code.
+Steps 3 and 4 compute components that are not needed for the full version of the model in the paper, but that are expected in several parts of the data loading/collation and training code. **(Note: These steps have been replaced with dummy operations for the Llama 3 preprocessing script.)**
 
 **Note that this may take a while depending on the batch size and hardware you use. The LLM response generation is by far the step that takes the longest time.**
 
